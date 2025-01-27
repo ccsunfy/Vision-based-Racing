@@ -12,12 +12,10 @@ from utils.policies import extractors
 from utils.algorithms.ppo import ppo
 from utils import savers
 import torch as th
-import utils.algorithms.lr_scheduler as lr_scheduler
 # from envs.projection_fill_one930 import CircleEnv
 # from envs.multi_per_state1112 import RacingEnv2
-# from envs.state_random_ob1209 import RacingEnv2
-# from envs.racing_demo.demo2_3Dcircle import RacingEnv2
-from envs.waypoint_test import RacingEnv2
+import utils.algorithms.lr_scheduler as lr_scheduler
+from envs.teacher_hover import HoverEnv2
 from utils.launcher import rl_parser, training_params
 from utils.type import Uniform
 from gymnasium import spaces       
@@ -31,14 +29,11 @@ training_params["comment"] = args.comment
 training_params["max_episode_steps"] = 256
 training_params["n_steps"] = training_params["max_episode_steps"]
 training_params["batch_size"] = training_params["num_env"] * training_params["n_steps"]
-training_params["learning_rate"] = 1e-3
+training_params["learning_rate"] = 3e-4
 save_folder = os.path.dirname(os.path.abspath(sys.argv[0])) + "/saved/"
 
-scene_path = "datasets/spy_datasets/configs/garage_empty"
-# scene_path = "datasets/spy_datasets/configs/racing_test"
-# scene_path = "datasets/spy_datasets/configs/racing"
-# scene_path = "datasets/spy_datasets/configs/racing_no_ob"
-# scene_path = "datasets/spy_datasets/configs/cross_circle"
+# scene_path = "datasets/spy_datasets/configs/garage_empty"
+scene_path = "datasets/spy_datasets/configs/racing8"
 random_kwargs = {
     "state_generator":
         {
@@ -82,10 +77,10 @@ def main():
     # if train mode, train the model
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
     if args.train:
-        env = RacingEnv2(num_agent_per_scene=training_params["num_env"],
+        env = HoverEnv2(num_agent_per_scene=training_params["num_env"],
                         # num_agent_per_scene=training_params["num_env"]/2,
                         # 如果需要开启多个环境，需要设置num_scene
-                            # num_scene=2,
+                        # num_scene=2,
                             visual=True, # 不用视觉要改成False
                             max_episode_steps=training_params["max_episode_steps"],
                             scene_kwargs={
@@ -105,24 +100,20 @@ def main():
             model = ppo.load(save_folder + args.weight, env=env)
         else:
             model = ppo(
-                # lr_schedule = lr_scheduler.linear_schedule(1e-3, 1e-4),
                 policy="CustomMultiInputPolicy",
                 policy_kwargs=dict(
                     # features_extractor_class = {},
                     # features_extractor_kwargs = {},
-                    pi_features_extractor_class=extractors.StateIndexVdImageExtractor,
+                    pi_features_extractor_class=extractors.StateIndexImageExtractor,
                     pi_features_extractor_kwargs={
                         "net_arch": {
                             # "pastAction":{
-                            #     "mlp_layer": [128, 128],d
+                            #     "mlp_layer": [128, 128],
                             # },
                             "depth": {
                                 "mlp_layer": [256],
                             },
                             "state":{ 
-                                "mlp_layer": [128, 128],
-                            },
-                            "vd": {
                                 "mlp_layer": [128, 128],
                             },
                             "index":{ 
@@ -136,13 +127,10 @@ def main():
                             }
                         }
                     },
-                    vf_features_extractor_class=extractors.StateIndexVdImageExtractor,
+                    vf_features_extractor_class=extractors.StateIndexImageExtractor,
                     vf_features_extractor_kwargs={
                         "net_arch": {
                             "state": {
-                                "mlp_layer": [128, 128],
-                            },
-                            "vd": {
                                 "mlp_layer": [128, 128],
                             },
                             # "pastAction":{
@@ -174,7 +162,7 @@ def main():
                 gamma=training_params["gamma"],  # lower 0.9 ~ 0.99
                 n_steps=training_params["n_steps"],
                 ent_coef=training_params["ent_coef"],
-                learning_rate=lr_scheduler.linear_schedule(3e-4, 1e-5),
+                learning_rate=lr_scheduler.linear_schedule(3e-4, 1e-4),
                 vf_coef=training_params["vf_coef"],
                 max_grad_norm=training_params["max_grad_norm"],
                 batch_size=training_params["batch_size"],
@@ -202,8 +190,9 @@ def main():
         test_model_path = save_folder + args.weight
         print("Loading environment...")
         from test import Test
-        env = RacingEnv2(num_agent_per_scene=1, visual=True,
+        env = HoverEnv2(num_agent_per_scene=4, visual=True,
                             # random_kwargs=random_kwargs,
+                            # max_episode_steps=training_params["max_episode_steps"],
                             scene_kwargs={
                                  "path": scene_path,
                                  "render_settings": {
@@ -225,13 +214,12 @@ def main():
                            save_path=os.path.dirname(os.path.realpath(__file__)) + "/saved/test",
                            name=args.weight)
         print("Starting test...")
-        test_handle.test(is_fig=True, is_fig_save=True, is_render=True, is_video=True, is_sub_video=True, is_video_save=True,
+        test_handle.test(is_fig=True, is_fig_save=True, is_render=True, is_video=True, is_video_save=True,
         render_kwargs ={
-            "points": th.tensor([[4., 1, 1.],[3, 0, 1],[5, 0, 1],[4, 1, 1],[1, 0, 1]])
+            "points": th.tensor([[4., 0, 1.],[1, 0, 1]])
         })
         print("Test completed.")
 
 
 if __name__ == "__main__":
     main()
-
