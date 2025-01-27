@@ -32,8 +32,8 @@ training_params["batch_size"] = training_params["num_env"] * training_params["n_
 training_params["learning_rate"] = 3e-4
 save_folder = os.path.dirname(os.path.abspath(sys.argv[0])) + "/saved/"
 
-# scene_path = "datasets/spy_datasets/configs/garage_empty"
-scene_path = "datasets/spy_datasets/configs/racing8"
+scene_path = "datasets/spy_datasets/configs/garage_empty"
+# scene_path = "datasets/spy_datasets/configs/racing8"
 random_kwargs = {
     "state_generator":
         {
@@ -81,7 +81,7 @@ def main():
                         # num_agent_per_scene=training_params["num_env"]/2,
                         # 如果需要开启多个环境，需要设置num_scene
                         # num_scene=2,
-                            visual=True, # 不用视觉要改成False
+                            visual=False, # 不用视觉要改成False
                             max_episode_steps=training_params["max_episode_steps"],
                             scene_kwargs={
                                  "path": scene_path,
@@ -104,21 +104,21 @@ def main():
                 policy_kwargs=dict(
                     # features_extractor_class = {},
                     # features_extractor_kwargs = {},
-                    pi_features_extractor_class=extractors.StateIndexImageExtractor,
+                    pi_features_extractor_class=extractors.StateLatentExtractor,
                     pi_features_extractor_kwargs={
                         "net_arch": {
                             # "pastAction":{
                             #     "mlp_layer": [128, 128],
                             # },
-                            "depth": {
-                                "mlp_layer": [256],
-                            },
+                            # "depth": {
+                            #     "mlp_layer": [256],
+                            # },
                             "state":{ 
                                 "mlp_layer": [128, 128],
                             },
-                            "index":{ 
-                                "mlp_layer": [128, 128],
-                            },
+                            # "index":{ 
+                            #     "mlp_layer": [128, 128],
+                            # },
                             "recurrent":{
                                 "class": "GRU",
                                 "kwargs":{
@@ -127,7 +127,7 @@ def main():
                             }
                         }
                     },
-                    vf_features_extractor_class=extractors.StateIndexImageExtractor,
+                    vf_features_extractor_class=extractors.StateLatentExtractor,
                     vf_features_extractor_kwargs={
                         "net_arch": {
                             "state": {
@@ -136,12 +136,12 @@ def main():
                             # "pastAction":{
                             #     "mlp_layer": [128, 128],
                             # },
-                            "depth": {
-                                "mlp_layer": [256],
-                            },
-                            "index":{ 
-                                "mlp_layer": [128, 128],
-                            },
+                            # "depth": {
+                            #     "mlp_layer": [256],
+                            # },
+                            # "index":{ 
+                            #     "mlp_layer": [128, 128],
+                            # },
                             "recurrent":{
                                 "class": "GRU",
                                 "kwargs":{
@@ -190,7 +190,7 @@ def main():
         test_model_path = save_folder + args.weight
         print("Loading environment...")
         from test import Test
-        env = HoverEnv2(num_agent_per_scene=4, visual=True,
+        env = HoverEnv2(num_agent_per_scene=1, visual=True,
                             # random_kwargs=random_kwargs,
                             # max_episode_steps=training_params["max_episode_steps"],
                             scene_kwargs={

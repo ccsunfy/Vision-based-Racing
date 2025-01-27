@@ -63,7 +63,7 @@ class TestBase:
         if is_video_save:
             if not is_video:
                 raise ValueError("is_video_save must be True if is_video is True")
-        self.model.policy.eval()
+        # self.model.policy.eval()
         done_all = th.full((self.model.env.num_envs,), False)
         obs = self.model.env.reset()
         self._img_names = [name for name in obs.keys() if (("color" in name) or ("depth" in name) or ("semantic" in name))]
@@ -79,7 +79,8 @@ class TestBase:
         while True:
             with th.no_grad():
                 if hasattr(self.model.policy.features_extractor, "recurrent_extractor"):
-                    action,_,obs["latent"] = self.model.policy.predict(obs)
+                    # action,_,obs["latent"] = self.model.policy.predict(obs)
+                    action,_,self.model.env.latent = self.model.policy.predict(obs)
                 else:
                     action, _ = self.model.policy.predict(obs)
                 if isinstance(action, tuple):

@@ -2,13 +2,13 @@ import os
 import sys
 
 import numpy as np
-from droneGymEnv import DroneGymEnvsBase
+from .droneGymEnv import DroneGymEnvsBase
 from typing import Union, Tuple, List, Optional, Dict
 import torch as th
 from habitat_sim import SensorType
 from gymnasium import spaces
 # from ..utils.tools.train_encoder import model as encoder
-from ..utils.type import TensorDict
+from utils.type import TensorDict
 
 
 class HoverEnv(DroneGymEnvsBase):

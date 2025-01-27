@@ -1315,6 +1315,43 @@ class NoiseStateIndexImageExtractor(BaseFeaturesExtractor):
         else:
             return th.cat(features, dim=1)
 
+class StateLatentExtractor(BaseFeaturesExtractor):
+    def __init__(self,
+                 observation_space: spaces.Dict,
+                 net_arch: Dict = {},
+                 activation_fn: Type[nn.Module] = nn.ReLU,
+                 ):
+        # for key in observation_space.keys():
+        #     assert key in "state" in key or "target" in key
+        obs_keys = list(observation_space.keys())
+        assert ("state" in obs_keys)
+
+        # 默认的特征维度为1
+        self._features_dim = 1
+        super(StateLatentExtractor, self).__init__(observation_space=observation_space,
+                                                   features_dim=self.features_dim)
+
+        state_features_dim = set_mlp_feature_extractor(self, "state", observation_space["state"], net_arch.get("state", {}), activation_fn)
+        # target_features_dim = set_mlp_feature_extractor(self, "target", observation_space["target"], net_arch.get("target", {}), activation_fn)
+        # pastAction_features_dim = set_mlp_feature_extractor(self, "pastAction", observation_space["pastAction"], net_arch.get("pastAction", {}), activation_fn)
+        # index_features_dim = set_mlp_feature_extractor(self, "index", observation_space["index"], net_arch.get("index", {}), activation_fn)
+        
+        self._features_dim = state_features_dim
+        # self._features_dim = state_features_dim + index_features_dim 
+
+    def forward(self, observations):
+        state_features = self.state_extractor(observations['state'])
+        # target_features = self.target_extractor(observations['target'])
+        # action_features = self.pastAction_extractor(observations['pastAction'])
+        # index_features = self.index_extractor(observations['index'])
+        features = [state_features]
+        # features = [state_features, index_features]
+        if hasattr(self, "recurrent_extractor"):
+            features, h = self.recurrent_extractor(th.cat(features, dim=1).unsqueeze(0), observations['latent'].unsqueeze(0))
+            return features[0], h[0]
+        else:
+            return th.cat(features, dim=1)
+
 def debug():
     test = 1
 
