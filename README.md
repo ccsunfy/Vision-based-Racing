@@ -10,6 +10,9 @@ This repository accompanies an **ICRA 2026** paper on end-to-end vision-based dr
 ### Demo video
 
 - YouTube demo: [`https://youtu.be/_u7rpTWxA-I`](https://youtu.be/_u7rpTWxA-I)
+- Clickable thumbnail:
+
+[![Video Demo](https://img.youtube.com/vi/_u7rpTWxA-I/hqdefault.jpg)](https://youtu.be/_u7rpTWxA-I)
 
 ---
 
