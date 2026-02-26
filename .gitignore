@@ -21,3 +21,6 @@ __pycache__/
 # Ignore ROS bag and zip files
 **/*.bag
 **/*.zip
+
+# Ignore ONNX model files
+**/*.onnx
