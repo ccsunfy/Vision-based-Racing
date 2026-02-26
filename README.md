@@ -1,6 +1,6 @@
 ## CRL for Drone Racing with Random Obstacles
 
-[![Conference](https://img.shields.io/badge/ICRA-2026-blue.svg)](#citation)
+[![Conference](https://img.shields.io/badge/ICRA-2026-red.svg)](#citation)
 [![Python](https://img.shields.io/badge/Python-3.x-blue.svg)]()
 [![Platform](https://img.shields.io/badge/Platform-Linux%7CGPU-green.svg)]()
 [![License](https://img.shields.io/badge/License-Research--only-lightgrey.svg)]()
@@ -163,7 +163,7 @@ If you need the full datasets, trained weights or additional examples, please ge
 
 ### Citation
 
-If you find this repository useful in your research, please cite the corresponding ICRA 2026 paper (placeholder BibTeX below – update with the final entry when available):
+If you find this repository useful in your research, please cite the corresponding ICRA 2026 paper (arxiv now – update with the final entry when available):
 
 ```text
 @inproceedings{visionracing_icra2026,
