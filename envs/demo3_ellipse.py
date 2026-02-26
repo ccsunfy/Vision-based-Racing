@@ -1,15 +1,12 @@
 import numpy as np
 from envs.droneGymEnv import DroneGymEnvsBase
-from typing import Union, Tuple, List, Optional, Dict
+from typing import Optional, Dict
 import torch as th
 from habitat_sim import SensorType
 from gymnasium import spaces
 from collections import deque
 # from ..utils.tools.train_encoder import model as encoder
 from utils.type import TensorDict
-import cv2
-import random
-import json
 from scipy.spatial.transform import Rotation as R
 # is_pos_reward = True
 
@@ -31,15 +28,6 @@ class RacingEnv(DroneGymEnvsBase):
             max_episode_steps: int = 256,
             latent_dim=None,
     ):
-        random_kwargs = {
-            "state_generator":
-                {
-                    "class": "Uniform",
-                    "kwargs": [
-                        {"position": {"mean": [1., 0., 2.], "half": [.2, .2, 0.2]}},
-                    ]
-                }
-        }
         random_kwargs = {
             "state_generator":
                 {
@@ -82,7 +70,7 @@ class RacingEnv(DroneGymEnvsBase):
         sensor_kwargs = [{
             "sensor_type": SensorType.DEPTH,
             "uuid": "depth",
-            "position": [0.0, 0.0, 0.0],
+            "position": [0.0, 0.0, -0.2],
             "resolution": [64, 64],
         }]
         # sensor_kwargs = []
@@ -90,7 +78,7 @@ class RacingEnv(DroneGymEnvsBase):
             "dt": 0.02,
             "ctrl_dt": 0.02,
             "action_type": "bodyrate",
-            "ctrl_delay": False,
+            "ctrl_delay": True,
         }
         super().__init__(
             num_agent_per_scene=num_agent_per_scene,
@@ -143,8 +131,18 @@ class RacingEnv(DroneGymEnvsBase):
         self._is_pass_next = th.zeros((self.num_envs,), dtype=th.bool)
         self.success_radius = 0.3
         
+        self.v_d = 2.0*th.ones((self.num_envs,),dtype=th.float)
+        
+        
         self.total_timesteps = 0
         self.target_update_interval = 10000
+        
+        self.observation_space["vd"] = spaces.Box(
+            low=0.,
+            high=30.,
+            shape=(1,),
+            dtype=np.float32
+        )
         
         self.observation_space["index"] = spaces.Box(
             low=0,
@@ -181,6 +179,7 @@ class RacingEnv(DroneGymEnvsBase):
             if self.visual:
                 obs = TensorDict({
                     "state": self.state.cpu().numpy(),
+                    "vd": self.v_d.cpu().numpy(),
                     "index": self._next_target_i.cpu().numpy(),
                     # "pastAction": self.pastAction.cpu().numpy(),
                     # "noise_target" : self.noise_target.cpu().numpy(),
@@ -190,6 +189,7 @@ class RacingEnv(DroneGymEnvsBase):
             else:
                 obs = TensorDict({
                     "state": self.state.cpu().numpy(),
+                    "vd": self.v_d.cpu().numpy(),
                     "index": self._next_target_i.cpu().numpy(),
                     # "noise_target" : self.noise_target.cpu().numpy(),
                     "latent": self.latent.cpu().numpy(),
@@ -199,6 +199,7 @@ class RacingEnv(DroneGymEnvsBase):
             if self.visual:
                 obs = TensorDict({
                     "state": self.state,
+                    "vd": self.v_d,
                     "index": self._next_target_i,
                     # "pastAction": self.pastAction,
                     "latent": self.latent,
@@ -208,6 +209,7 @@ class RacingEnv(DroneGymEnvsBase):
             else:
                 obs = TensorDict({
                     "state": self.state,
+                    "vd": self.v_d,
                     "index": self._next_target_i,
                     "latent": self.latent,
                     # "noise_target": self.noise_target,
@@ -284,42 +286,29 @@ class RacingEnv(DroneGymEnvsBase):
                 else:
                     self._next_target_i[index] = 4
                     
-    # def _choose_target(self, indices=None):
-    #     indices = th.arange(self.num_envs) if indices is None else indices
-    #     rela_poses = self.position - th.as_tensor([4,0,1])
-    #     for index in indices:
-    #         if rela_poses[index][0] < 0:
-    #             if rela_poses[index][1] > 0:
-    #                 self._next_target_i[index] = 0
-    #             else:
-    #                 self._next_target_i[index] = 3
-    #         else:
-    #             if rela_poses[index][0] > 0:
-    #                 self._next_target_i[index] = 1
-    #             else:
-    #                 self._next_target_i[index] = 2
-                    
     def get_reward(self) -> th.Tensor:
-        lambda1 = 0.8
-        lambda2 = 0.025
+        lambda1 = 0.6
+        lambda2 = 0.0025
         lambda3 = 0.0005
         lambda4 = 0.0002
         lambda5 = 0.001
-        lambda6 = 0.0005
+        lambda6 = 0.01
         
         _next_target_i_clamp = self._next_target_i.clamp_max(len(self.targets) - 1)
         r_prog1 = lambda1 * ((self.last_position - self.targets[_next_target_i_clamp]).norm(dim=1)-(self.position - self.targets[_next_target_i_clamp]).norm(dim=1))
         # r_prog2 = self._success * (self.max_episode_steps - self._step_count) * 1 / ((self.velocity-0).norm()+1)
         # r_perc = th.tensor(-lambda2 * np.exp(-np.power(self.compute_yaw_error(_next_target_i_clamp),4)))
+        r_ori = -lambda2 * (self.orientation-self.orientations[_next_target_i_clamp]).norm(dim=1)
         # r_success = 10.0 * self.get_success() # no contribution to the reward
         r_cmd = -lambda3 * (self._action - 0).norm(dim=1) - lambda4 * (self._action - self.last_action).norm(dim=1)
         r_crash = -4.0  * self.is_collision
-        # r_v = -lambda7 * (self.velocity - 0).norm(dim=1) 
+        r_v = -lambda6 * (self.velocity - 0).norm(dim=1) 
         r_col_avoid = -lambda5 * 1 / (self.collision_dis + 0.2) 
         # + (1-self.collision_dis ).relu() * ((self.collision_vector * (self.velocity - 0)).sum(dim=1) / (1e-6+self.collision_dis)).relu() * -lambda6
         # r_pass = (1.0 -(self.position - self.targets[_next_target_i_clamp]).norm(dim=1))* self.is_pass_next
         r_pass = 5.0 * self.is_pass_next
-        reward = r_prog1 + r_crash  + r_pass + r_cmd + r_col_avoid
+        reward = r_prog1 + r_crash  + r_pass + r_cmd + r_v + r_col_avoid + r_ori
+        
         return reward  
 
 
@@ -378,12 +367,12 @@ class RacingEnv2(RacingEnv):
             indices=None
     ) -> Dict:
         # self.get_depth_image()
-        self.total_timesteps += 1
+        # self.total_timesteps += 1
 
         # 检查时间步长是否达到要求
-        if self.total_timesteps % self.target_update_interval == 0:
-            # self.reset_by_id(indices=self.indice)
-            self.reset()
+        # if self.total_timesteps % self.target_update_interval == 0:
+        #     # self.reset_by_id(indices=self.indice)
+        #     self.reset()
 
         _next_targets_i_clamp = th.stack([self._next_target_i + i for i in range(self._next_target_num)]).T % len(self.targets)
         next_targets = self.targets[_next_targets_i_clamp]
@@ -414,14 +403,22 @@ class RacingEnv2(RacingEnv):
                 return TensorDict({
                     "index": self._next_target_i.clone().detach().cpu().numpy().reshape(-1, 1),
                     "state": state,
+                    # "noise_state": noise_state,
                     # "pastAction": self.pastAction.cpu().numpy(),
+                    # "noise_target": relative_pos.cpu().numpy(),
+                    "vd": self.v_d.unsqueeze(1).cpu().numpy(),
                     "depth": self.sensor_obs["depth"],
-                    "latent": self.latent.cpu().numpy(),
+                    # "latent": self.latent.cpu().numpy(),
+                    # "mask": (self.image/255.0).astype(np.float32),
                 })
             else:
                 return TensorDict({
                     "index": self._next_target_i.clone().detach().cpu().numpy().reshape(-1, 1),
                     "state": state,
-                    "latent": self.latent.cpu().numpy(),
+                    "vd": self.v_d.unsqueeze(1).cpu().numpy(),
+                    # "noise_state": noise_state,
+                    # "latent": self.latent.cpu().numpy(),
+                    # "noise_target": relative_pos.cpu().numpy(),
                     # "pastAction": self.pastAction.cpu().numpy()
                 })
+

@@ -8,6 +8,8 @@ import sys
 import numpy as np
 import copy
 from utils.FigFashion.FigFashion import FigFon
+# import onnx
+# import onnxruntime as ort
 
 FigFon.set_fashion("IEEE")
 
@@ -46,6 +48,10 @@ class TestBase:
         self.render_image_all = []
         self.reward_all = []
         self.t = []
+        
+        # onnx_path = "waypoint_model_3_6_v0.onnx"
+        # self.onnx_model = onnx.load(onnx_path)
+        # self.ort_sess = ort.InferenceSession(onnx_path)
 
     def test(
             self,
@@ -79,10 +85,28 @@ class TestBase:
         while True:
             with th.no_grad():
                 if hasattr(self.model.policy.features_extractor, "recurrent_extractor"):
-                    # action,_,obs["latent"] = self.model.policy.predict(obs)
+                    # action,_,obs["latent"] = self.model.policy.predict(obs,deterministic=True)
                     action,_,self.model.env.latent = self.model.policy.predict(obs)
+                    print("torch",action)
+                    # inputs = {
+                    #     'depth': obs['depth'],
+                    #     'state': obs['state'].detach().cpu().numpy(),
+                    #     'vd': obs['vd'],
+                    #     'index': obs['index'].astype(np.float32),
+                    #     'latent': obs['latent']
+                    #     }
+                    # onnx_actions = self.ort_sess.run(None, inputs)
+                    # onnx_action = onnx_actions[0]
+                    # onnx_value = onnx_actions[1]
+                    # self.model.env.latent = onnx_actions[2]
+                    # onnx_action = np.clip(onnx_action, -1,1)  # type: ignore[assignment, arg-type]
+
+                    # print("onnx ",onnx_action)
+
+
                 else:
-                    action, _ = self.model.policy.predict(obs)
+                    action, _ = self.model.policy.predict(obs, deterministic=True)
+                    print("torch",action)
                 if isinstance(action, tuple):
                     action = action[0]
                 # obs, reward, done, info = self.model.env.step(action, is_test=True)
@@ -106,12 +130,9 @@ class TestBase:
             step_count += 1  # 增加步长计数器
             
             # 检查是否达到最大步长或所有环境都完成
-            if done_all.all() or step_count >= self.max_steps:
+            if done_all.all() :
                 break
             
-            # if done_all.all():
-            #     break
-
         test = 1
         print(f"Average Rewards:{np.array([info['episode']['r'] for info in self.info_all[-1]]).mean()}")
 

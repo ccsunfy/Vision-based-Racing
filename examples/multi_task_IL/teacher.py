@@ -7,7 +7,9 @@ import torch
 import time
 import logging
 
-sys.path.append(os.getcwd())
+# 获取项目根目录的绝对路径
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(project_root)
 from utils.policies import extractors
 from utils.algorithms.ppo import ppo
 from utils import savers
@@ -15,7 +17,11 @@ import torch as th
 # from envs.projection_fill_one930 import CircleEnv
 # from envs.multi_per_state1112 import RacingEnv2
 import utils.algorithms.lr_scheduler as lr_scheduler
-from envs.teacher_hover import HoverEnv2
+# from envs.tech1_hover import HoverEnv2
+# from envs.tech2_racing import RacingEnv2
+# from envs.tech3_tracking import TrackEnv2
+# from envs.tech4_landing import LandingEnv2
+from envs.tech5_tracking_cir import TrackEnv2
 from utils.launcher import rl_parser, training_params
 from utils.type import Uniform
 from gymnasium import spaces       
@@ -24,7 +30,7 @@ args = rl_parser().parse_args()
 
 """ SAVED HYPERPARAMETERS """
 training_params["num_env"] = 100
-training_params["learning_step"] = 5e7
+training_params["learning_step"] = 1e8
 training_params["comment"] = args.comment
 training_params["max_episode_steps"] = 256
 training_params["n_steps"] = training_params["max_episode_steps"]
@@ -44,26 +50,15 @@ random_kwargs = {
                         {
                             "class": "Uniform",
                             "kwargs":
-                                {"position": {"mean": [2., 2., 1], "half": [.2, .2, 0.2]}},
-                        },
-                        {
-                            "class": "Uniform",
-                            "kwargs":
-                                {"position": {"mean": [6., 2., 1.5], "half": [.2, .2, 0.2]}},
-                        },
-                        {
-                            "class": "Uniform",
-                            "kwargs":
-                                {"position": {"mean": [6., -2., 1.5], "half": [.2, .2, 0.2]}},
-                        },
-                        {
-                            "class": "Uniform",
-                            "kwargs":
-                                {"position": {"mean": [2., 0., 1], "half": [.2, .2, 0.2]}},
+                                {"position": {"mean": [1., 0., 1], "half": [.2, .2, 0.2]}
+                                    # "velocity": {"mean": [0., 0., 0.], "half": [0.1, 0.1, 0.1]}
+                                    },
+
                         },
                     ]
                 }
             ]
+
         }
 }
 
@@ -71,13 +66,13 @@ random_kwargs = {
 # torch.autograd.detect_anomaly()
 
 latent_dim = 256
-# latent_dim = None
+latent_dim = None
 
 def main():
     # if train mode, train the model
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
     if args.train:
-        env = HoverEnv2(num_agent_per_scene=training_params["num_env"],
+        env = TrackEnv2(num_agent_per_scene=training_params["num_env"],
                         # num_agent_per_scene=training_params["num_env"]/2,
                         # 如果需要开启多个环境，需要设置num_scene
                         # num_scene=2,
@@ -119,12 +114,12 @@ def main():
                             # "index":{ 
                             #     "mlp_layer": [128, 128],
                             # },
-                            "recurrent":{
-                                "class": "GRU",
-                                "kwargs":{
-                                    "hidden_size": latent_dim,
-                                }
-                            }
+                            # "recurrent":{
+                            #     "class": "GRU",
+                            #     "kwargs":{
+                            #         "hidden_size": latent_dim,
+                            #     }
+                            # }
                         }
                     },
                     vf_features_extractor_class=extractors.StateLatentExtractor,
@@ -142,12 +137,12 @@ def main():
                             # "index":{ 
                             #     "mlp_layer": [128, 128],
                             # },
-                            "recurrent":{
-                                "class": "GRU",
-                                "kwargs":{
-                                    "hidden_size": latent_dim,
-                                }
-                            }
+                            # "recurrent":{
+                            #     "class": "GRU",
+                            #     "kwargs":{
+                            #         "hidden_size": latent_dim,
+                            #     }
+                            # }
                         }
                     },
                     net_arch=dict(
@@ -162,7 +157,7 @@ def main():
                 gamma=training_params["gamma"],  # lower 0.9 ~ 0.99
                 n_steps=training_params["n_steps"],
                 ent_coef=training_params["ent_coef"],
-                learning_rate=lr_scheduler.linear_schedule(3e-4, 1e-4),
+                learning_rate=lr_scheduler.linear_schedule(1e-4, 1e-5),
                 vf_coef=training_params["vf_coef"],
                 max_grad_norm=training_params["max_grad_norm"],
                 batch_size=training_params["batch_size"],
@@ -177,9 +172,12 @@ def main():
         start_time = time.time()
         
         logging.info('Starting training...')
-        model.learn(training_params["learning_step"])
+        model.learn(training_params["learning_step"],
+                    tb_log_name="tech_tracking",)
         logging.info('Training completed')
-        model.save()
+        model_name = f"tech_tracking"  # 或其他命名方式
+        model.save(f"{save_folder}/{model_name}")
+        # model.save()
         logging.info('Model saved')
         training_params["time"] = time.time() - start_time
 
@@ -190,14 +188,16 @@ def main():
         test_model_path = save_folder + args.weight
         print("Loading environment...")
         from test import Test
-        env = HoverEnv2(num_agent_per_scene=1, visual=True,
-                            # random_kwargs=random_kwargs,
+        env = TrackEnv2(num_agent_per_scene=1, visual=True,
+                            random_kwargs=random_kwargs,
                             # max_episode_steps=training_params["max_episode_steps"],
                             scene_kwargs={
                                  "path": scene_path,
                                  "render_settings": {
                                      "mode": "fix",
+                                     "line_width": 10.,
                                      "view": "custom",
+                                     "axes": False, 
                                      "resolution": [1080, 1920],
                                     #  "position": th.tensor([[12., 6.8, 5.5], [10,4.8,4.5]]),
                                      "position": th.tensor([[7., 6.8, 5.5], [7, 4.8, 4.5]]),

@@ -70,6 +70,30 @@ blue = mn.Color4(0.0, 0.0, 1.0, copacity)
 white = mn.Color4(1.0, 1.0, 1.0, copacity)
 orange = mn.Color4(1.0, 0.5, 0.0, copacity)
 
+ColorSet4 = [
+    # mn.Color4(144. / 255,156. / 255,  33. / 255, 0.5),  # default color
+    mn.Color4(244. / 255,156. / 255,  33. / 255, 0.5),  # default color
+    mn.Color4( 36. / 255, 184. / 255, 233. / 255,copacity),  # highlight color1
+    mn.Color4(34. / 255, 147. / 255, 238. / 255, copacity),  # highlight color2
+    mn.Color4(49. / 255, 63. / 255, 216. / 255, copacity),  # highlight color3
+] # bgr
+
+
+red = mn.Color4(1.0, 0.0, 0.0, copacity)
+green = mn.Color4(0.0, 1.0, 0.0, copacity)
+blue = mn.Color4(0.0, 0.0, 1.0, copacity)
+white = mn.Color4(1.0, 1.0, 1.0, copacity)
+orange = mn.Color4(1.0, 0.5, 0.0, copacity)
+
+
+def color_consequence(
+        color1=ColorSet4[0],
+        color2=ColorSet4[3],
+        factor=1,
+):
+    factor = np.array(factor).clip(min=0.,max=1.)
+
+    return color1*(1-factor)+factor*color2
 
 def calc_camera_transform(
         eye_translation=mn.Vector3(1, 1, 1), lookat=mn.Vector3(0, 0, 0)
@@ -395,7 +419,8 @@ class SceneManager(ABC):
 
     def render(
             self,
-            is_draw_axes: bool = True,
+            # is_draw_axes: bool = True,
+            is_draw_axes: bool = False,
             points: Optional[Tensor] = None,
             lines: Optional[Tensor] = None,
             curves: Optional[Tensor] = None,
@@ -474,13 +499,14 @@ class SceneManager(ABC):
                     self._line_renders[scene_id].pop_transform()
 
         # draw the trajectory of agents
-        if self.render_settings["trajectory"]:
-            for scene_id in range(self.num_scene):
-                for agent_id in range(self.num_agent_per_scene):
-                    traj = [mn.Vector3(point[:3]) for point in self.trajectory[scene_id][agent_id]]
-                    if len(traj) > 1:
-                        self._line_renders[0].draw_path_with_endpoint_circles(
-                            traj, 0.1, white)
+        # change the render trajectory in test
+        # if self.render_settings["trajectory"]:
+        #     for scene_id in range(self.num_scene):
+        #         for agent_id in range(self.num_agent_per_scene):
+        #             traj = [mn.Vector3(point[:3]) for point in self.trajectory[scene_id][agent_id]]
+        #             if len(traj) > 1:
+        #                 self._line_renders[0].draw_path_with_endpoint_circles(
+        #                     traj, 0.1, blue)
                     # for line_id in range(len(self.trajectory[scene_id][agent_id]) - 1):
                     #     self._line_renders[scene_id].draw_transformed_line(
                     #         self.trajectory[scene_id][agent_id][line_id][:3],
@@ -490,7 +516,24 @@ class SceneManager(ABC):
                     # trajectory_data = np.array(self.trajectory[scene_id][agent_id])
                     # self._line_renders[scene_id].draw_transformed_line(trajectory_data[:3], self.trajectory[scene_id][agent_id][i+1][:3], white)
 
-        # set the render camera pose
+        if self.render_settings["trajectory"]:
+            for scene_id in range(self.num_scene):
+                for agent_id in range(self.num_agent_per_scene):
+                    # traj = [mn.Vector3(point[:3]) for point in self.trajectory[scene_id][agent_id]]
+                    # if len(traj) > 1:
+                    #     self._line_renders[0].draw_path_with_endpoint_circles(
+                    #         traj, 0.1, white)
+                    for line_id in reversed(np.arange(len(self.trajectory[scene_id][agent_id])-1)):
+                        len_traj = len(self.trajectory[scene_id][agent_id])
+                        self._line_renders[scene_id].draw_transformed_line(
+                            self.trajectory[scene_id][agent_id][line_id][:3],
+                            self.trajectory[scene_id][agent_id][line_id+1][:3],
+                            color_consequence(factor=((len_traj-line_id)/100).clip(min=0.,max=1.)),
+                        )
+                    # trajectory_data = np.array(self.trajectory[scene_id][agent_id])
+                    # self._line_renders[scene_id].draw_transformed_line(trajectory_data[:3], self.trajectory[scene_id][agent_id][i+1][:3], white)
+                
+                
         if self.render_settings["mode"] == "follow":
             if self.render_settings["view"] == "back" or self.render_settings["view"] == "near":
                 if self.render_settings["view"] == "back":

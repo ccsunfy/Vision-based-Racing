@@ -398,6 +398,6 @@ if __name__ == "__main__":
         # --dataset datasets/spy_datasets/spy_datasets.scene_dataset_config.json \
         # --scene garage_simple_0  --disable-physics"
 
-# f"python /home/suncc/habitat-sim/examples/viewer.py --dataset datasets/spy_datasets/spy_datasets.scene_dataset_config.json         --scene circle_debug  --disable-physics"
+# f"cc"
 # f"python /home/lfx-desktop/files/habitat-sim/examples/viewer.py --dataset datasets/hssd-hab/hssd-hab.scene_dataset_config.json --scene 102343992 --disable-physics"
 # python /home/suncc/habitat-sim/examples/viewer.py --dataset datasets/spy_datasets/spy_datasets.scene_dataset_config.json         --scene cross_and_avoid_debug  --disable-physics

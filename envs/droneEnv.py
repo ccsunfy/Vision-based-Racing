@@ -105,9 +105,9 @@ class DroneEnvsBase:
 
     def _generate_noise_obs(self, sensor):
         if sensor == "IMU":
-            state_with_noise = self.state + self.noise_settings["IMU"].generate(self.state.shape)
+            state_with_noise = self.state + self.noise_settings["IMU"].generate(self.dynamics.num).to(self.device)
             # normalize the orientation
-            normalized_ori = th.nn.functional.normalize(state_with_noise[:, 3:], p=2, dim=1)
+            normalized_ori = th.nn.functional.normalize(state_with_noise[:, 3:7], p=2, dim=1)
             state_with_noise = th.cat([
                 state_with_noise[:, :3],
                 normalized_ori,
@@ -144,16 +144,16 @@ class DroneEnvsBase:
         if issubclass(state_generator_class, UniformStateRandomizer):
             generator_kwargs = [{
                 "position": kwarg.get("position"),
-                # "orientation": kwarg.get("orientation", {"mean": [0., 0., 0.], "half": [0., 0., 0.]}),
-                # "velocity": kwarg.get("velocity", {"mean": [0., 0., 0.], "half": [0., 0., 0.]}),
-                # "angular_velocity": kwarg.get("angular_velocity", {"mean": [0., 0., 0.], "half": [0., 0., 0.]})
+                "orientation": kwarg.get("orientation", {"mean": [0., 0., 0.], "half": [0., 0., 0.]}),
+                "velocity": kwarg.get("velocity", {"mean": [0., 0., 0.], "half": [0., 0., 0.]}),
+                "angular_velocity": kwarg.get("angular_velocity", {"mean": [0., 0., 0.], "half": [0., 0., 0.]})
             } for kwarg in kwargs_list]
         elif issubclass(state_generator_class, NormalStateRandomizer):
             generator_kwargs = [{
                 "position": kwarg.get("position"),
-                # "orientation": kwarg.get("orientation", {"mean": [0., 0., 0.], "std": [0., 0., 0.]}),
-                # "velocity": kwarg.get("velocity", {"mean": [0., 0., 0.], "std": [0., 0., 0.]}),
-                # "angular_velocity": kwarg.get("angular_velocity", {"mean": [0., 0., 0.], "std": [0., 0., 0.]})
+                "orientation": kwarg.get("orientation", {"mean": [0., 0., 0.], "std": [0., 0., 0.]}),
+                "velocity": kwarg.get("velocity", {"mean": [0., 0., 0.], "std": [0., 0., 0.]}),
+                "angular_velocity": kwarg.get("angular_velocity", {"mean": [0., 0., 0.], "std": [0., 0., 0.]})
             } for kwarg in kwargs_list]
         elif issubclass(state_generator_class, UnionRandomizer):
             # generator_kwargs = [kwarg.get("kwargs") for kwarg in kwargs_list]
@@ -256,40 +256,41 @@ class DroneEnvsBase:
         self.dynamics.reset(pos=pos, ori=ori, vel=vel, ori_vel=ori_vel, motor_omega=motor_speed, thrusts=thrust, t=t, indices=indices)
         if self.visual:
             self.sceneManager.reset_agents(std_positions=pos, std_orientations=ori, indices=indices)
-            self.update_observation(indices=indices)
+        self.update_observation(indices=indices)
         self.update_collision(indices)
 
     def update_observation(self, indices=None):
-        if indices is None:
-            img_obs = self.sceneManager.get_observation()
-            # training channel sequence
-            for sensor_uuid in self._visual_sensor_list:
-                if "depth" in sensor_uuid:
-                    self._sensor_obs[sensor_uuid] = \
-                        np.expand_dims(np.stack([each_agent_obs[sensor_uuid] for each_agent_obs in img_obs]), 1)
-                elif "color" in sensor_uuid:
-                    self._sensor_obs[sensor_uuid] = \
-                        np.transpose(np.stack([each_agent_obs[sensor_uuid] for each_agent_obs in img_obs])[..., :3], (0, 3, 1, 2))
-                elif "semantic" in sensor_uuid:
-                    self._sensor_obs[sensor_uuid] = \
-                        np.stack([each_agent_obs[sensor_uuid] for each_agent_obs in img_obs])
-                else:
-                    raise KeyError("Can not find uuid of sensors")
-        else:
-            img_obs = self.sceneManager.get_observation(indices=indices)
-            for each_agent_obs, index in zip(img_obs, indices):
+        if self.sceneManager:
+            if indices is None:
+                img_obs = self.sceneManager.get_observation()
+                # training channel sequence
                 for sensor_uuid in self._visual_sensor_list:
                     if "depth" in sensor_uuid:
-                        self._sensor_obs[sensor_uuid][index, :, :, :] = \
-                            np.expand_dims(each_agent_obs[sensor_uuid], 0)
+                        self._sensor_obs[sensor_uuid] = \
+                            np.expand_dims(np.stack([each_agent_obs[sensor_uuid] for each_agent_obs in img_obs]), 1)
                     elif "color" in sensor_uuid:
-                        self._sensor_obs[sensor_uuid][index, :, :, :] = \
-                            np.transpose(each_agent_obs[sensor_uuid][..., :3], (2, 0, 1))
+                        self._sensor_obs[sensor_uuid] = \
+                            np.transpose(np.stack([each_agent_obs[sensor_uuid] for each_agent_obs in img_obs])[..., :3], (0, 3, 1, 2))
                     elif "semantic" in sensor_uuid:
-                        self._sensor_obs[sensor_uuid][index, :, :, :] = \
-                            each_agent_obs[sensor_uuid]
+                        self._sensor_obs[sensor_uuid] = \
+                            np.stack([each_agent_obs[sensor_uuid] for each_agent_obs in img_obs])
                     else:
                         raise KeyError("Can not find uuid of sensors")
+            else:
+                img_obs = self.sceneManager.get_observation(indices=indices)
+                for each_agent_obs, index in zip(img_obs, indices):
+                    for sensor_uuid in self._visual_sensor_list:
+                        if "depth" in sensor_uuid:
+                            self._sensor_obs[sensor_uuid][index, :, :, :] = \
+                                np.expand_dims(each_agent_obs[sensor_uuid], 0)
+                        elif "color" in sensor_uuid:
+                            self._sensor_obs[sensor_uuid][index, :, :, :] = \
+                                np.transpose(each_agent_obs[sensor_uuid][..., :3], (2, 0, 1))
+                        elif "semantic" in sensor_uuid:
+                            self._sensor_obs[sensor_uuid][index, :, :, :] = \
+                                each_agent_obs[sensor_uuid]
+                        else:
+                            raise KeyError("Can not find uuid of sensors")
 
         self._sensor_obs["IMU"] = self._generate_noise_obs("IMU")
 
@@ -330,7 +331,7 @@ class DroneEnvsBase:
         self.dynamics.step(action)
         if self.visual:
             self.sceneManager.set_pose(self.dynamics.position, self.dynamics._orientation.toTensor().T)
-            self.update_observation()
+        self.update_observation() # 4_26
         self.update_collision()
 
     def set_seed(self, seed: Union[int, None] = 42):
@@ -414,9 +415,9 @@ class DroneEnvsBase:
     def full_state(self):
         return self.dynamics.full_state
 
-    # @property
-    # def acceleration(self):
-    #     return self.dynamics.acceleration
+    @property
+    def acceleration(self):
+        return self.dynamics.acceleration
 
     @property
     def collision_point(self):

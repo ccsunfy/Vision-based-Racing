@@ -1229,6 +1229,7 @@ class StateIndexVdImageExtractor(BaseFeaturesExtractor):
             if "image" in key or "color" in key or "depth" in key:
                 _image_features_dims.append(set_cnn_feature_extractor(self, key, observation_space[key], net_arch.get(key, {}), activation_fn))
         self._features_dim = _state_features_dim  + _vd_features_dim + _index_features_dim + sum(_image_features_dims)
+        
         if net_arch.get("recurrent", None) is not None:
             _hidden_features_dim = set_recurrent_feature_extractor(self, self._features_dim, net_arch.get("recurrent"))
             self._features_dim = _hidden_features_dim
@@ -1242,6 +1243,74 @@ class StateIndexVdImageExtractor(BaseFeaturesExtractor):
         index_features = self.index_extractor(observations['index'])
         features = [state_features,  index_features, vd_features]
         for name in self._image_extractor_names:
+            # image forward process
+            x = getattr(self, name)(observations[name.split("_")[0]])
+            features.append(x)
+        # 合并特征
+        if hasattr(self, "recurrent_extractor"):
+            features, h = self.recurrent_extractor(th.cat(features, dim=1).unsqueeze(0), observations['latent'].unsqueeze(0))
+            return features[0], h[0]
+        else:
+            return th.cat(features, dim=1)
+        
+class StateVdImageExtractor(BaseFeaturesExtractor):
+    backbone_alias: Dict = {
+        "resnet18": models.resnet18,
+        "resnet34": models.resnet34,
+        "resnet50": models.resnet50,
+        "resnet101": models.resnet101,
+        "efficientnet_l": models.efficientnet_v2_l,
+        "efficientnet_m": models.efficientnet_v2_m,
+        "efficientnet_s": models.efficientnet_v2_s,
+        "mobilenet_l": models.mobilenet_v3_large,
+        "mobilenet_s": models.mobilenet_v3_small,
+    }
+
+    def __init__(self,
+                 observation_space: spaces.Dict,
+                 net_arch: Dict = {},
+                 activation_fn: Type[nn.Module] = nn.ReLU,
+                 ):
+
+        obs_keys = list(observation_space.keys())
+        assert ("state" in obs_keys) \
+                and ("vd" in obs_keys)\
+               and ("image" in obs_keys or "color" in obs_keys or "depth" in obs_keys)
+
+        # 默认的特征维度为1
+        self._features_dim = 1
+        super(StateVdImageExtractor, self).__init__(observation_space=observation_space,
+                                                        features_dim=self.features_dim)
+
+        _state_features_dim = set_mlp_feature_extractor(self, "state", observation_space["state"], net_arch.get("state", {}), activation_fn)
+        _vd_features_dim = set_mlp_feature_extractor(self, "vd", observation_space["vd"], net_arch.get("vd", {}), activation_fn)
+        # _target_features_dim = set_mlp_feature_extractor(self, "target", observation_space["target"], net_arch.get("target", {}), activation_fn)
+        # _action_features_dim = set_mlp_feature_extractor(self, "pastAction", observation_space["pastAction"], net_arch.get("pastAction", {}), activation_fn)
+        # _index_features_dim = set_mlp_feature_extractor(self, "index", observation_space["index"], net_arch.get("index", {}), activation_fn)
+        
+        # 处理image的卷积层
+
+        _image_features_dims = []
+        self._image_extractor_names = []
+        for key in observation_space.keys():
+            if "image" in key or "color" in key or "depth" in key:
+                _image_features_dims.append(set_cnn_feature_extractor(self, key, observation_space[key], net_arch.get(key, {}), activation_fn))
+        self._features_dim = _state_features_dim  + _vd_features_dim + sum(_image_features_dims)
+        
+        if net_arch.get("recurrent", None) is not None:
+            _hidden_features_dim = set_recurrent_feature_extractor(self, self._features_dim, net_arch.get("recurrent"))
+            self._features_dim = _hidden_features_dim
+            self._is_recurrent = True
+
+    def forward(self, observations):
+        state_features = self.state_extractor(observations['state'])
+        vd_features = self.vd_extractor(observations['vd'])
+        # target_features = self.target_extractor(observations['target'])
+        # action_features = self.pastAction_extractor(observations['pastAction'])
+        # index_features = self.index_extractor(observations['index'])
+        features = [state_features, vd_features]
+        for name in self._image_extractor_names:
+            # image forward process
             x = getattr(self, name)(observations[name.split("_")[0]])
             features.append(x)
         # 合并特征
@@ -1352,6 +1421,116 @@ class StateLatentExtractor(BaseFeaturesExtractor):
         else:
             return th.cat(features, dim=1)
 
+class StateIndexVdExtractor(BaseFeaturesExtractor):
+    def __init__(self,
+                 observation_space: spaces.Dict,
+                 net_arch: Dict = {},
+                 activation_fn: Type[nn.Module] = nn.ReLU,
+                 ):
+        # for key in observation_space.keys():
+        #     assert key in "state" in key or "target" in key
+        obs_keys = list(observation_space.keys())
+        assert ("state" in obs_keys) and ("index" in obs_keys)and ("vd" in obs_keys) 
+
+        # 默认的特征维度为1
+        self._features_dim = 1
+        super(StateIndexVdExtractor, self).__init__(observation_space=observation_space,
+                                                   features_dim=self.features_dim)
+
+        state_features_dim = set_mlp_feature_extractor(self, "state", observation_space["state"], net_arch.get("state", {}), activation_fn)
+        # target_features_dim = set_mlp_feature_extractor(self, "target", observation_space["target"], net_arch.get("target", {}), activation_fn)
+        # pastAction_features_dim = set_mlp_feature_extractor(self, "pastAction", observation_space["pastAction"], net_arch.get("pastAction", {}), activation_fn)
+        vd_features_dim = set_mlp_feature_extractor(self, "vd", observation_space["vd"], net_arch.get("vd", {}), activation_fn)
+        index_features_dim = set_mlp_feature_extractor(self, "index", observation_space["index"], net_arch.get("index", {}), activation_fn)
+        
+        self._features_dim = state_features_dim + index_features_dim + vd_features_dim
+        # self._features_dim = state_features_dim + index_features_dim 
+        if net_arch.get("recurrent", None) is not None:
+            _hidden_features_dim = set_recurrent_feature_extractor(self, self._features_dim, net_arch.get("recurrent"))
+            self._features_dim = _hidden_features_dim
+            self._is_recurrent = True
+            
+    def forward(self, observations):
+        state_features = self.state_extractor(observations['state'])
+        # target_features = self.target_extractor(observations['target'])
+        # action_features = self.pastAction_extractor(observations['pastAction'])
+        vd_features = self.vd_extractor(observations['vd'])
+        index_features = self.index_extractor(observations['index'])
+        features = [state_features, index_features, vd_features]
+        # features = [state_features, index_features]
+        if hasattr(self, "recurrent_extractor"):
+            features, h = self.recurrent_extractor(th.cat(features, dim=1).unsqueeze(0), observations['latent'].unsqueeze(0))
+            return features[0], h[0]
+        else:
+            return th.cat(features, dim=1)
+
+
+class StateImageExtractor(BaseFeaturesExtractor):
+    backbone_alias: Dict = {
+        "resnet18": models.resnet18,
+        "resnet34": models.resnet34,
+        "resnet50": models.resnet50,
+        "resnet101": models.resnet101,
+        "efficientnet_l": models.efficientnet_v2_l,
+        "efficientnet_m": models.efficientnet_v2_m,
+        "efficientnet_s": models.efficientnet_v2_s,
+        "mobilenet_l": models.mobilenet_v3_large,
+        "mobilenet_s": models.mobilenet_v3_small,
+    }
+
+    def __init__(self,
+                observation_space: spaces.Dict,
+                net_arch: Dict = {},
+                activation_fn: Type[nn.Module] = nn.ReLU,
+                ):
+
+        obs_keys = list(observation_space.keys())
+        assert ("state" in obs_keys) \
+            and ("image" in obs_keys or "color" in obs_keys or "depth" in obs_keys)
+
+        # 默认的特征维度为1
+        self._features_dim = 1
+        super(StateImageExtractor, self).__init__(observation_space=observation_space,
+                                                        features_dim=self.features_dim)
+
+        _state_features_dim = set_mlp_feature_extractor(self, "state", observation_space["state"], net_arch.get("state", {}), activation_fn)
+        # _vd_features_dim = set_mlp_feature_extractor(self, "vd", observation_space["vd"], net_arch.get("vd", {}), activation_fn)
+        # _target_features_dim = set_mlp_feature_extractor(self, "target", observation_space["target"], net_arch.get("target", {}), activation_fn)
+        # _action_features_dim = set_mlp_feature_extractor(self, "pastAction", observation_space["pastAction"], net_arch.get("pastAction", {}), activation_fn)
+        # _index_features_dim = set_mlp_feature_extractor(self, "index", observation_space["index"], net_arch.get("index", {}), activation_fn)
+        
+        # 处理image的卷积层
+
+        _image_features_dims = []
+        self._image_extractor_names = []
+        for key in observation_space.keys():
+            if "image" in key or "color" in key or "depth" in key:
+                _image_features_dims.append(set_cnn_feature_extractor(self, key, observation_space[key], net_arch.get(key, {}), activation_fn))
+        self._features_dim = _state_features_dim + sum(_image_features_dims)
+        
+        if net_arch.get("recurrent", None) is not None:
+            _hidden_features_dim = set_recurrent_feature_extractor(self, self._features_dim, net_arch.get("recurrent"))
+            self._features_dim = _hidden_features_dim
+            self._is_recurrent = True
+
+    def forward(self, observations):
+        state_features = self.state_extractor(observations['state'])
+        # vd_features = self.vd_extractor(observations['vd'])
+        # target_features = self.target_extractor(observations['target'])
+        # action_features = self.pastAction_extractor(observations['pastAction'])
+        # index_features = self.index_extractor(observations['index'])
+        features = [state_features]
+        for name in self._image_extractor_names:
+            # image forward process
+            x = getattr(self, name)(observations[name.split("_")[0]])
+            features.append(x)
+        # 合并特征
+        if hasattr(self, "recurrent_extractor"):
+            features, h = self.recurrent_extractor(th.cat(features, dim=1).unsqueeze(0), observations['latent'].unsqueeze(0))
+            return features[0], h[0]
+        else:
+            return th.cat(features, dim=1)
+        
 def debug():
     test = 1
 

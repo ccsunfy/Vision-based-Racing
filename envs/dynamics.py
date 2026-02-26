@@ -1,8 +1,6 @@
-import numpy as np
 import torch as th
 from typing import Union, List, Tuple, Optional, Dict
-from abc import ABC
-import os, io, sys
+import os, sys
 import json
 
 sys.path.append(os.getcwd())
@@ -28,9 +26,12 @@ class Dynamics:
             action_type: str = "bodyrate",
             ori_output_type: str = "quaternion",
             seed: int = 42,
-            dt: float = 0.0025,
-            ctrl_dt: float = 0.02,
+            dt: float = 0.005,
+            ctrl_dt: float = 0.03,
             ctrl_delay: bool = True,
+            # comm_delay: float = 0.09,
+            comm_delay: float = 0.06,
+            sensor_delay: float = 0.03,
             action_space: Tuple[float, float] = (-1, 1),
             device: th.device = th.device("cpu"),
             integrator: str = "euler",
@@ -49,21 +50,31 @@ class Dynamics:
         self._angular_velocity = None
         self._motor_omega = None
         self._thrusts = None
+        self._acceleration = None
         self._t = None
         # command format: [gross_thrust / m (z-acc), bodyrate]
         # command format: [yaw, vx, vy, vz]
-
         # const parameters
         self.action_type = self.action_type_alias[action_type]
 
+        self.angular_output_type = ori_output_type
+        # self.angular_dim = 3 if ori_output_type == "euler" else (4 if ori_output_type == "quaternion" else 6)
         self._is_quat_output = ori_output_type == "quaternion"
         self.dt = dt
         self.ctrl_dt = ctrl_dt
-        if not ctrl_dt % dt == 0:
+        if not th.as_tensor(ctrl_dt) % th.as_tensor(dt) == 0:
             raise ValueError("ctrl_dt should be a multiple of dt")
+
         self._interval_steps = int(ctrl_dt / dt)
+        self._comm_delay_steps = int(comm_delay / ctrl_dt)
+        self._sensor_delay_steps = int(sensor_delay / ctrl_dt)
         self._integrator = integrator
         self._ctrl_delay = ctrl_delay
+
+        # drag coefficients
+        self._drag_coeffs_2 = th.rand(2, device=self.device) * 0.1 + 0.5
+        self._drag_coeffs_2 *= 0.01
+        self.z_drag_coeffs = th.ones(1, device=self.device) * 1.15
 
         # initialization
         self.set_seed(seed)
@@ -71,8 +82,12 @@ class Dynamics:
         self._get_scale_factor(action_space)
         self._set_device(device)
 
+        # self._init_thrusts = th.ones((4, self.num), device=self.device) * self.hover_thrust_per_motor()
+        self._init_thrust = -(self.m * g / 4)[-1]
+        self._init_motor_omega = self._compute_rotor_omega(self._init_thrust)
+
     def _init(self):
-        self.load(os.path.dirname(__file__)+"/../configs/example.json")
+        self.load(os.path.dirname(__file__) + "/../configs/example.json")
         t_BM_ = (
                 self._arm_length
                 * th.tensor(0.5).sqrt()
@@ -82,7 +97,8 @@ class Dynamics:
             [0, 0, 0, 0],
         ])
         )
-        self._inertia = self.m / 12.0 * (self._arm_length ** 2) * th.diag(self._inertia)  # 惯性张量
+        # self._inertia = self.m / 12.0 * (self._arm_length ** 2) * th.diag(self._inertia)  # 惯性张量
+        self._inertia = th.diag(self._inertia)
         self._inertia_inv = th.inverse(self._inertia)
         self._B_allocation = th.vstack(
             [th.ones(1, 4), t_BM_[:2], self._kappa * th.tensor([1, -1, 1, -1])]
@@ -93,12 +109,23 @@ class Dynamics:
         self._orientation = Quaternion(num=self.num, device=self.device)  # 姿态
         self._velocity = th.zeros((3, self.num), device=self.device)  # 速度
         self._angular_velocity = th.zeros((3, self.num), device=self.device)  # 角速度
-
+        self._acceleration = th.zeros((3, self.num), device=self.device)  # 线加速度
         self._t = th.zeros((self.num,), device=self.device)
 
+        self._angular_acc = th.zeros((3, self.num), device=self.device)
+        self._ctrl_i = th.zeros((3, self.num), device=self.device)
+        # self._pre_action = th.zeros((4, self.num), device=self.device)
+        self._pre_action = [
+            th.zeros((4, self.num), device=self.device)
+            for _ in range(self._comm_delay_steps)
+        ]
+        self._pre_acc = [th.zeros((1, self.num), device=self.device)
+            for _ in range(self._sensor_delay_steps)]
     def detach(self):
         self._position = self._position.clone().detach()  # 将self._position属性进行clone()操作，然后detach()分离，赋值给self._position
         self._orientation = self._orientation.clone().detach()
+        self._acceleration = self._acceleration.clone().detach()
+        self._accz = self._acceleration[2, :].clone().detach()  # 线加速度z分量
         self._velocity = self._velocity.clone().detach()
         self._angular_velocity = self._angular_velocity.clone().detach()
         self._motor_omega = self._motor_omega.clone().detach()
@@ -112,6 +139,8 @@ class Dynamics:
         self._inertia = self._inertia.to(device)
         self._inertia_inv = self._inertia_inv.to(device)
         self._drag_coeffs = self._drag_coeffs.to(device)
+        self._drag_coeffs_2 = self._drag_coeffs_2.to(device)
+        self.z_drag_coeffs = self.z_drag_coeffs.to(device)
 
         global z, g
         z = z.to(device)
@@ -133,41 +162,105 @@ class Dynamics:
             self._orientation = Quaternion(num=self.num, device=self.device) if ori is None else Quaternion(*ori.T)
             self._velocity = th.zeros((3, self.num), device=self.device) if vel is None else vel.T
             self._angular_velocity = th.zeros((3, self.num), device=self.device) if ori_vel is None else ori_vel.T
-            self._motor_omega = th.ones((4, self.num), device=self.device) * self._bd_rotor_omega.min if motor_omega is None else motor_omega.T
-            self._thrusts = th.ones((4, self.num), device=self.device) * self._bd_thrust.min if thrusts is None else thrusts.T
+            self._thrusts = th.ones((4, self.num), device=self.device) * self._init_thrust if thrusts is None else thrusts.T
+            self._motor_omega = th.ones((4, self.num), device=self.device) * self._init_motor_omega if motor_omega is None else motor_omega.T
+
+            # self._motor_omega = th.ones((4, self.num), device=self.device) * self._bd_rotor_omega.min if motor_omega is None else motor_omega.T
+            # self._thrusts = th.ones((4, self.num), device=self.device) * self._bd_thrust.min if thrusts is None else thrusts.T
             self._t = th.zeros((self.num,), device=self.device) if t is None else t
-            if motor_omega is not None and motor_omega.min()<=149:
-                test = 1
+            self._ctrl_i = th.zeros((3, self.num), device=self.device)
+            self._angular_acc = th.zeros((3, self.num), device=self.device)
+            self._acceleration = th.zeros((3, self.num), device=self.device)
+            self._accz = th.zeros((1, self.num), device=self.device)  # 线加速度z分量
+            # self._pre_action = th.zeros((4, self.num), device=self.device)
+            self._pre_action = [th.zeros(4, self.num) for _ in range(self._comm_delay_steps)]
+            self._pre_acc = [th.zeros(1, self.num) for _ in range(self._sensor_delay_steps)]
+
         else:
             self._position[:, indices] = th.zeros((3, len(indices)), device=self.device) if pos is None else pos.T
             self._orientation[indices] = Quaternion(num=len(indices), device=self.device) if ori is None else Quaternion(*ori.T)
             self._velocity[:, indices] = th.zeros((3, len(indices)), device=self.device) if vel is None else vel.T
             self._angular_velocity[:, indices] = th.zeros((3, len(indices)), device=self.device) if ori_vel is None else ori_vel.T
-            self._motor_omega[:, indices] = th.ones((4, len(indices)), device=self.device) * self._bd_rotor_omega.min if motor_omega is None else motor_omega.T
-            self._thrusts[:, indices] = th.ones((4, len(indices)), device=self.device) * self._bd_thrust.min if thrusts is None else thrusts.T
+            self._motor_omega[:, indices] = th.ones((4, len(indices)), device=self.device) * self._init_motor_omega if motor_omega is None else motor_omega.T
+            self._thrusts[:, indices] = th.ones((4, len(indices)), device=self.device) * self._init_thrust if thrusts is None else thrusts.T
+            # self._motor_omega[:, indices] = th.ones((4, len(indices)), device=self.device) * self._bd_rotor_omega.min if motor_omega is None else motor_omega.T
+            # self._thrusts[:, indices] = th.ones((4, len(indices)), device=self.device) * self._bd_thrust.min if thrusts is None else thrusts.T
             self._t[indices] = th.zeros((len(indices),), device=self.device) if t is None else t
+            self._ctrl_i[:, indices] = th.zeros((3, len(indices)), device=self.device)
+            self._angular_acc[:, indices] = th.zeros((3, len(indices)), device=self.device)
+            self._acceleration[:, indices] = th.zeros((3, len(indices)), device=self.device)
+            self._accz[:, indices] = th.zeros((1, len(indices)), device=self.device)  # 线加速度z分量
+            # self._pre_action[:, indices] = th.zeros((4, len(indices)), device=self.device)
+            for i in range(self._comm_delay_steps):
+                self._pre_action[i][:, indices] = self._pre_action[i][:, indices] * 0
+            for i in range(self._sensor_delay_steps):
+                self._pre_acc[i][:, indices] = self._pre_acc[i][:, indices] * 0
+        self._pre_thr = self.thrusts.sum(dim=1)
+
         return self.state
 
     def step(self, action) -> Tuple[th.Tensor, th.Tensor]:
+        # self._pre_action,action=action.T,self._pre_action.T
+
+        # Add real imu delay
+        if self._comm_delay_steps:
+            self._pre_action.append(action.T.clone())
+            action = self._pre_action[0].T
+            self._pre_action.pop(0)
+        else:
+            action = action
+            
+        # if self._sensor_delay_steps:
+        #     self._pre_acc.append(self._acceleration.clone())
+        #     self._acceleration = self._pre_acc[0].clone()
+        #     self._pre_acc.pop(0)
+        # else:
+        #     self._acceleration = self._acceleration.clone()
+
         command = self._de_normalize(action.to(self.device))
-        thrust_des = self._get_thrust_from_cmd(command)
+        thrust_des = self._get_thrust_from_cmd(command)  #
         assert (thrust_des <= self._bd_thrust.max).all()  # debug
 
         for _ in range(self._interval_steps):
+            # thrust_des = self._get_thrust_from_cmd(command)
+            # assert (thrust_des <= self._bd_thrust.max).all()
+                
             self._run_motors(thrust_des)
+            # velocity_body = self._orientation.inv_rotate(self._velocity+0)  # (3, N)
+            # self._thrusts = self._thrusts / (1+0.035*velocity_body[2,:]) 
+            # self._thrusts = self._thrusts * (1 - 0.02 * (th.arcsin((velocity_body[:2,:]).norm(dim=0, keepdim=True) / (velocity_body.norm(dim=0, keepdim=True) + 1e-6))).abs())  # 归一化 thrusts
             force_torque = self._B_allocation @ self._thrusts  # 计算力矩
 
             # compute linear acceleration and body torque
-            acceleration = self._orientation.rotate(
-                z * force_torque[0] -
-                self._drag_coeffs * (self._orientation.inv_rotate(self._velocity - 0).pow(2))
-            ) / self.m + g
-            # acceleration = self._orientation.rotate(z * force_torque[0]) / self.m + g
-
+            # linear_drag = (
+            #     self._drag_coeffs_2[0] * velocity_body[0, :].abs() * velocity_body[0, :].sign(),  # x
+            #     self._drag_coeffs_2[0] * velocity_body[1, :].abs() * velocity_body[1, :].sign(),  # y
+            #     self._drag_coeffs_2[0] * velocity_body[2, :].abs() * velocity_body[2, :].sign() * self.z_drag_coeffs  # z
+            # )
+            # linear_drag = th.stack(linear_drag, dim=0)
+            # quadratic_drag = (
+            #     self._drag_coeffs_2[1] * (velocity_body[0, :].pow(2)) * velocity_body[0, :].sign(),  # x
+            #     self._drag_coeffs_2[1] * (velocity_body[1, :].pow(2)) * velocity_body[1, :].sign(),  # y
+            #     self._drag_coeffs_2[1] * (velocity_body[2, :].pow(2) * velocity_body[2, :].sign() * self.z_drag_coeffs)  # z
+            # )
+            # quadratic_drag = th.stack(quadratic_drag, dim=0)
+            
+            # linear_drag = th.tensor([[0.01,0.01,0.02]]).T * velocity_body
+            # quadratic_drag = self._drag_coeffs_2[1] * velocity_body * velocity_body.abs()
+            # drag = (linear_drag + quadratic_drag) * th.tensor([[1,1,self.z_drag_coeffs]]).T
+            drag = self._drag_coeffs * (self._orientation.inv_rotate(self._velocity - 0).pow(2))
+            acceleration =  self._orientation.rotate(z * force_torque[0] - drag) / self.m + g  
+            # acceleration = self._orientation.rotate(z * force_torque[0] - drag) / self.m + g
+            # acceleration = self._orientation.rotate(z * force_torque[0] - linear_drag - quadratic_drag) / self.m + g
+            # acceleration = (z * force_torque[0] - quadratic_drag) / self.m + g
+            # quadratic_drag = self._drag_coeffs * (self._orientation.inv_rotate(self._velocity - 0).pow(2))
+            # acceleration = self._orientation.rotate(
+            #     z * force_torque[0] - quadratic_drag) / self.m + g
+            
             torque = force_torque[1:]
 
             # integrate the state
-            self._position, self._orientation, self._velocity, self._angular_velocity = (
+            self._position, self._orientation, self._velocity, self._angular_velocity, self._angular_acc, self._acceleration = (
                 Integrator.integrate(
                     pos=self._position,
                     ori=self._orientation,
@@ -182,9 +275,10 @@ class Dynamics:
                 )
             )
             self._orientation = self._orientation.normalize()
+            # self._accz = self._acceleration[2, :].clone().detach()  # 更新线加速度z分量
         self._t += self.ctrl_dt
 
-        self._ugly_fix()
+        self._ugly_fix()  # has problems
 
         return self.state
 
@@ -206,23 +300,34 @@ class Dynamics:
             thrusts_des = command
         elif self.action_type == ACTION_TYPE.BODYRATE:
             angular_velocity_error = command[1:] - self._angular_velocity
+            thrust_error = command[0] - (self._acceleration[2,:]+9.8) * self.m # z-acceleration error
+            d_thr = (self.thrusts.sum(dim=1) - self._pre_thr) / self.ctrl_dt
             # body_torque_des = (
             #     self._inertia @ self._PID.p @ angular_velocity_error
             #     + self._angular_velocity.cross(self._inertia @ self._angular_velocity)
             # )
             # b = self._inertia @ self._angular_velocity
             # a = self._angular_velocity
+            # self.cache_i = 0 in self.reset()
+            self._ctrl_i += (self._BODYRATE_PID.i @ (angular_velocity_error * self.dt))
+            self._ctrl_i = self._ctrl_i.clip(min=-3, max=3)
             body_torque_des = \
                 self._inertia @ self._BODYRATE_PID.p @ angular_velocity_error \
-                + cross(self._angular_velocity + 0, self._inertia @ (self._angular_velocity + 0))
+                + cross(self._angular_velocity + 0, self._inertia @ (self._angular_velocity + 0)) \
+                + self._ctrl_i \
+                - self._BODYRATE_PID.d @ self._angular_acc
+
             # + th.stack([a[1]*b[2]-a[2]*b[1]-0, a[2]*b[0]-a[0]*b[2]-0, a[0]*b[1]-a[1]*b[0]-0])
             # + cross(self._angular_velocity, self._inertia @ self._angular_velocity) \
             # + self._inertia @ self._angular_velocity
             # + th.linalg.cross(self._angular_velocity.T, (self._inertia @ self._angular_velocity).T).T
             # + (self._inertia @ self._angular_velocity)
-
-            thrusts_torque = th.cat([command[0:1, :], body_torque_des])
+            thrust_des =  \
+                self._thrust_PID.p * thrust_error + command[0] +  self._thrust_PID.d * d_thr  # z-acceleration error
+            thrusts_torque = th.cat([thrust_des.unsqueeze(0), body_torque_des])
+            # thrusts_torque = th.cat([command[0:1, :], body_torque_des])
             thrusts_des = self._B_allocation_inv @ thrusts_torque
+            
         elif self.action_type == ACTION_TYPE.VELOCITY:
             command = command.T
             a_des = self._VELOCITY_PID.p * (command[1:] - self._velocity)
@@ -245,7 +350,7 @@ class Dynamics:
                 m = 0.5 * (R_des[..., i].T @ R[..., i] - R[..., i].T @ R_des[..., i])
                 pose_err[:, i] = -th.as_tensor([-m[1, 2], m[0, 2], -m[0, 1]], device=self.device)
 
-                ang_vel_err[:, i] = (R_des[..., i].T @ R[..., i] @ th.tensor([[0], [0], [yaw_spd_des[i]]]).squeeze() - self._angular_velocity[:,i])
+                ang_vel_err[:, i] = (R_des[..., i].T @ R[..., i] @ th.tensor([[0], [0], [yaw_spd_des[i]]]).squeeze() - self._angular_velocity[:, i])
             body_torque_des = self._inertia @ (self._BODYRATE_PID.p @ pose_err + self._BODYRATE_PID.p @ ang_vel_err - cross(self._angular_velocity, self._angular_velocity))
 
             thrusts_des = self._B_allocation_inv @ th.vstack([gross_thrust_des, body_torque_des])
@@ -273,7 +378,7 @@ class Dynamics:
                 m = 0.5 * (R_des[..., i].T @ R[..., i] - R[..., i].T @ R_des[..., i])
                 pose_err[:, i] = -th.as_tensor([-m[1, 2], m[0, 2], -m[0, 1]], device=self.device)
 
-                ang_vel_err[:, i] = (R_des[..., i].T @ R[..., i] @ th.tensor([[0], [0], [yaw_spd_des[i]]]).squeeze() - self._angular_velocity[:,i])
+                ang_vel_err[:, i] = (R_des[..., i].T @ R[..., i] @ th.tensor([[0], [0], [yaw_spd_des[i]]]).squeeze() - self._angular_velocity[:, i])
             body_torque_des = self._inertia @ (self._BODYRATE_PID.p @ pose_err + self._BODYRATE_PID.p @ ang_vel_err - cross(self._angular_velocity, self._angular_velocity))
 
             thrusts_des = self._B_allocation_inv @ th.vstack([gross_thrust_des, body_torque_des])
@@ -284,6 +389,11 @@ class Dynamics:
         clamp_thrusts_des = th.clamp(thrusts_des, self._bd_thrust.min, self._bd_thrust.max)
 
         return clamp_thrusts_des
+
+    @property
+    def hover_thrust_per_motor(self):
+        # 总悬停推力 = 质量 * 重力加速度，均分到四个电机
+        return (self.m * 9.81) / 4
 
     def _run_motors(self, thrusts_des) -> th.Tensor:
         """_summary_
@@ -311,7 +421,7 @@ class Dynamics:
             _type_: _description_
         """
         _thrusts = (
-                (self._thrust_map[0] * _motor_omega).pow(2)
+                (self._thrust_map[0] * (_motor_omega+0).pow(2))
                 + self._thrust_map[1] * _motor_omega
                 + self._thrust_map[2]
         )
@@ -326,12 +436,13 @@ class Dynamics:
             _type_: _description_
         """
         scale = 1 / (2 * self._thrust_map[0])
+        # yi yuan er ci han shu
         omega = scale * (
                 -self._thrust_map[1]
                 + th.sqrt(
-                    self._thrust_map[1].pow(2)
-                    - 4 * self._thrust_map[0] * (self._thrust_map[2] - _thrusts)
-                )
+            self._thrust_map[1].pow(2)
+            - 4 * self._thrust_map[0] * (self._thrust_map[2] - _thrusts)
+        )
         )
         return omega
 
@@ -346,9 +457,16 @@ class Dynamics:
             data = json.load(f)
         self.m = th.tensor(data["mass"])
         self._drag_coeffs = th.tensor(data["drag_coeffs"]).T * 0.5 * 1.225 * th.tensor([[0.03, 0.03, 0.05]]).T
+        # self._drag_coeffs_quad = th.tensor(data["drag_coeffs_quad"]).T * 0.5 * 1.225 * th.tensor([[0.03, 0.03, 0.05]]).T
+        # self._drag_coeffs_linear = th.tensor(data["drag_coeffs_linear"]).T * 0.5 * 1.225 * th.tensor([[0.03, 0.03, 0.05]]).T
         self._inertia = th.tensor(data["inertia"])
         self.name = data["name"]
-        self._BODYRATE_PID = PID(p=th.tensor(data["BODYRAYE_PID"]["p"]))
+        self._BODYRATE_PID = PID(p=th.tensor(data["BODYRAYE_PID"]["p"]),
+                                 i=th.tensor(data["BODYRAYE_PID"]["i"]),
+                                 d=th.tensor(data["BODYRAYE_PID"]["d"]))
+        self._thrust_PID = PID(p=th.tensor(data["THRUST_PID"]["p"]),
+                               i=th.tensor(data["THRUST_PID"]["i"]),
+                                d=th.tensor(data["THRUST_PID"]["d"]))
         self._VELOCITY_PID = PID(p=th.tensor(data["VELOCITY_PID"]["p"]), i=th.tensor(data["VELOCITY_PID"]["i"]), d=th.tensor(data["VELOCITY_PID"]["d"]))
         self._POSITION_PID = PID(p=th.tensor(data["POSITION_PID"]["p"]), i=th.tensor(data["POSITION_PID"]["i"]), d=th.tensor(data["POSITION_PID"]["d"]))
         self._kappa = th.tensor(data["kappa"])
@@ -392,9 +510,9 @@ class Dynamics:
         if self.action_type == ACTION_TYPE.BODYRATE:
             if thrust_normalize_method == "medium":
                 # (_, average_)
-                # thrust_scale = (self.m * -g[2]) * 2 / self.m
                 thrust_scale = (self.m * -g[2]) * 1 / self.m
-                thrust_bias = (self.m * -g[2]) / self.m
+                # thrust_scale = (self.m * -g[2]) * 1 / self.m
+                thrust_bias = (self.m * -g[2]) * 1 / self.m
             elif thrust_normalize_method == "max_min":
                 # (min_act, max_act)->(min_thrust, max_thrust) this method try to reach the limit of drone, which is negative for sim2real
                 thrust_scale = (
@@ -509,6 +627,10 @@ class Dynamics:
     @property
     def position(self):
         return self._position.T
+    
+    @property
+    def acceleration(self):
+        return self._acceleration.T
 
     @property
     def orientation(self):

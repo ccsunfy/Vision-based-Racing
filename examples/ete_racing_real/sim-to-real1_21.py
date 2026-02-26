@@ -25,7 +25,7 @@ from scipy.spatial.transform import Rotation as R
 from utils.type import bound
 
 MODE_CHANNEL = 6 
-HOVER_ACC = 9.77
+HOVER_ACC = 9.81
 HOVER_THRUST = 0.3
 MODE_SHIFT_VALUE = 0.25
 
@@ -83,8 +83,8 @@ class RealEnv:
         
         self.latent = th.zeros(256, dtype=th.float32)
 
-        self.v_d = 2.0 * th.ones((self.num_envs,),dtype=th.float32)
-        self.m = 0.75  # mass of the drone
+        self.v_d = 1.0 * th.ones((self.num_envs,),dtype=th.float32)
+        self.m = 0.68  # mass of the drone
         
         # sub
         start_depth_sub = time.time()

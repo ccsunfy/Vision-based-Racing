@@ -139,6 +139,7 @@ class RolloutBuffer(BaseBuffer):
         super().__init__(
             buffer_size, observation_space, action_space, device, n_envs=n_envs
         )
+        # self.position_errors = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.gae_lambda = gae_lambda
         self.gamma = gamma
         self.generator_ready = False
@@ -161,6 +162,7 @@ class RolloutBuffer(BaseBuffer):
         self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.generator_ready = False
         super().reset()
+        # self.position_errors = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
 
     def compute_returns_and_advantage(
         self, last_values: th.Tensor, dones: np.ndarray
@@ -216,6 +218,7 @@ class RolloutBuffer(BaseBuffer):
         episode_start: np.ndarray,
         value: th.Tensor,
         log_prob: th.Tensor,
+        # position_error=None
     ) -> None:
         """
         :param obs: Observation
@@ -248,6 +251,10 @@ class RolloutBuffer(BaseBuffer):
         self.pos += 1
         if self.pos == self.buffer_size:
             self.full = True
+        # if position_error is not None:
+        #     self.position_errors[self.pos] = np.array(position_error)
+        # else:
+        #     self.position_errors[self.pos] = np.zeros(self.n_envs)
 
     def get(
         self, batch_size: Optional[int] = None
@@ -263,6 +270,7 @@ class RolloutBuffer(BaseBuffer):
                 "log_probs",
                 "advantages",
                 "returns",
+                # "position_errors",
             ]
 
             for tensor in _tensor_names:
@@ -290,6 +298,7 @@ class RolloutBuffer(BaseBuffer):
             self.log_probs[batch_inds].flatten(),
             self.advantages[batch_inds].flatten(),
             self.returns[batch_inds].flatten(),
+            # self.position_errors[batch_inds].flatten(),
         )
         return RolloutBufferSamples(*tuple(map(self.to_torch, data)))
 
@@ -441,7 +450,10 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         assert self._last_obs is not None, "No previous observation was provided"
         # Switch to eval mode (this affects batch norm / dropout)
         self.policy.set_training_mode(False)
-
+        
+        # 初始化误差累计
+        total_error = 0.0
+        error_count = 0
         n_steps = 0
         rollout_buffer.reset()
         # Sample new weights for the state dependent exploration
@@ -462,8 +474,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             with th.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.observation_space, self.device)
-                if not hasattr(self.policy.features_extractor, "recurrent_extractor"):
-                    actions, values, log_probs = self.policy(obs_tensor)
+                if not hasattr(self.policy.features_extractor, "recurrent_extractor"): 
+                    actions, values, log_probs = self.policy(obs_tensor) #policy forward onnx!!!!
                 else:
                     actions, values, log_probs, self.env.latent = self.policy(obs_tensor)
             actions = actions.cpu().numpy()
@@ -483,8 +495,17 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                         actions, self.action_space.low, self.action_space.high
                     )
 
-            new_obs, rewards, dones, infos = env.step(clipped_actions)
-
+            new_obs, rewards, dones, infos = env.step(clipped_actions) #transfer action to dynamic
+            
+            # # 获取位置误差
+            # position_errors = []
+            # for i, env_instance in enumerate(env.envs):
+            #     if hasattr(env_instance, 'get_position_error'):
+            #         error = env_instance.get_position_error().mean().item()
+            #         position_errors.append(error)
+            #         total_error += error
+            #         error_count += 1
+                    
             self.num_timesteps += env.num_envs
 
             # Give access to local variables
@@ -501,6 +522,9 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
             # Handle timeout by bootstraping with value function
             # see GitHub issue #633
+            # for i, info in enumerate(infos):
+                # if i < len(position_errors):
+                #     info['position_error'] = position_errors[i]
 
             for idx, done in enumerate(dones):
                 if (
@@ -522,6 +546,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 self._last_episode_starts,  # type: ignore[arg-type]
                 values,
                 log_probs,
+                # position_errors
             )
             self._last_obs = new_obs  # type: ignore[assignment]
             self._last_episode_starts = dones
@@ -619,6 +644,11 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
                         pbar.n = self.num_timesteps
                     self.train()
+                    # if self.num_timesteps % 100000 == 0:
+                    #     self.save(self.policy_save_path+"core_dumped")
+                    if self.num_timesteps % 10000000 == 0:
+                        save_path = self.policy_save_path + "core_dumped_model.zip"  # 固定文件名+扩展名
+                        self.save(save_path)
 
         except KeyboardInterrupt:
             self.save(self.policy_save_path+"_cache")
@@ -1024,6 +1054,7 @@ class ppo(PPO):
         entropy_losses = []
         pg_losses, value_losses = [], []
         clip_fractions = []
+        # position_errors = []
 
         continue_training = True
         # train for n_epochs epochs
@@ -1031,6 +1062,10 @@ class ppo(PPO):
             approx_kl_divs = []
             # Do a complete pass on the rollout buffer
             for rollout_data in self.rollout_buffer.get(self.batch_size):
+                
+                # if hasattr(rollout_data, 'position_errors'):
+                #     position_errors.extend(rollout_data.position_errors.cpu().numpy())
+                
                 actions = rollout_data.actions
                 if isinstance(self.action_space, spaces.Discrete):
                     # Convert discrete action from float to long
@@ -1152,6 +1187,7 @@ class ppo(PPO):
         )
 
         # Logs
+        # self.logger.record("train/mean_position_error", np.mean(position_errors))
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
@@ -1159,6 +1195,7 @@ class ppo(PPO):
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))
         self.logger.record("train/loss", loss.item())
         self.logger.record("train/explained_variance", explained_var)
+        # self.logger.record("train/error", np.mean(np.abs(self.rollout_buffer.values.flatten() - self.rollout_buffer.returns.flatten())))
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", th.exp(self.policy.log_std).mean().item())
 

@@ -87,8 +87,8 @@ class RacingEnv(DroneGymEnvsBase):
         }]
         # sensor_kwargs = []
         dynamics_kwargs = {
-            "dt": 0.02,
-            "ctrl_dt": 0.02,
+            "dt": 0.005,
+            "ctrl_dt": 0.03,
             "action_type": "bodyrate",
             "ctrl_delay": True,
         }
@@ -117,14 +117,13 @@ class RacingEnv(DroneGymEnvsBase):
         self.previous_actions = deque(maxlen=4)  # 初始化动作队列
         self.last_action = th.zeros((self.num_envs, 4)) 
         self.last_position = th.zeros((self.num_envs, 3))
-        self.v_d = 2.0*th.ones((self.num_envs,),dtype=th.float)
+        self.v_d = 1.0*th.ones((self.num_envs,),dtype=th.float)
                 
         self.targets = th.as_tensor([
             [3, 0, 1.],
-            [4, 1., 1.],
-            [5, 0, 1.],
-            [4, -1., 1.],
-            [3, 0, 1.]
+            [5, -2, 1.],
+            [7, 0, 1.],
+            [9, 0, 1.]
         ])
         self.orientations = th.as_tensor([
             [-0.5,  0.5,  0.5, -0.5],
@@ -145,12 +144,12 @@ class RacingEnv(DroneGymEnvsBase):
         self.total_timesteps = 0
         # self.target_update_interval = 500
         
-        self.observation_space["index"] = spaces.Box(
-            low=0,
-            high=len(self.targets),
-            shape=(1,),
-            dtype=np.int32
-        )
+        # self.observation_space["index"] = spaces.Box(
+        #     low=0,
+        #     high=len(self.targets),
+        #     shape=(1,),
+        #     dtype=np.int32
+        # )
                 
         self.observation_space["vd"] = spaces.Box(
             low=0.,
@@ -286,15 +285,16 @@ class RacingEnv(DroneGymEnvsBase):
                     
     def get_reward(self) -> th.Tensor:
         lambda1 = 0.8
-        lambda2 = 0.025
+        lambda2 = 0.005
         lambda3 = 0.0005
         lambda4 = 0.0002
         lambda5 = 0.001
         # lambda6 = 0.0005
-        lambda6 = 0.02
+        lambda6 = 0.01
         
         _next_target_i_clamp = self._next_target_i.clamp_max(len(self.targets) - 1)
         r_prog1 = lambda1 * ((self.last_position - self.targets[_next_target_i_clamp]).norm(dim=1)-(self.position - self.targets[_next_target_i_clamp]).norm(dim=1))
+        r_ori = -lambda2 *  (self.orientation - th.tensor([1, 0, 0, 0])).norm(dim=1)
         # r_prog2 = self._success * (self.max_episode_steps - self._step_count) * 1 / ((self.velocity-0).norm()+1)
         # r_perc = th.tensor(-lambda2 * np.exp(-np.power(self.compute_yaw_error(_next_target_i_clamp),4)))
         # r_success = 10.0 * self.get_success() # no contribution to the reward
@@ -306,8 +306,8 @@ class RacingEnv(DroneGymEnvsBase):
         # + (1-self.collision_dis ).relu() * ((self.collision_vector * (self.velocity - 0)).sum(dim=1) / (1e-6+self.collision_dis)).relu() * -lambda6
         # r_pass = (1.0 -(self.position - self.targets[_next_target_i_clamp]).norm(dim=1))* self.is_pass_next
         r_pass = 5.0 * self.is_pass_next
-        r_success = 10.0 * self.get_success()
-        reward = r_prog1 + r_crash  + r_pass + r_cmd + r_success + r_vel
+        # r_success = 10.0 * self.get_success()
+        reward = r_prog1 + r_crash  + r_pass + r_cmd  + r_vel + r_ori
         return reward  
 
 class RacingEnv2(RacingEnv):
@@ -381,18 +381,18 @@ class RacingEnv2(RacingEnv):
         if not self.requires_grad:
             if self.visual:
                 return TensorDict({
-                    "index": self._next_target_i.clone().detach().cpu().numpy().reshape(-1, 1),
+                    # "index": self._next_target_i.clone().detach().cpu().numpy().reshape(-1, 1),
                     "state": state,
                     # "pastAction": self.pastAction.cpu().numpy(),
                     "vd": self.v_d.unsqueeze(1).cpu().numpy(),
                     "depth": self.sensor_obs["depth"],
-                    "latent": self.latent.cpu().numpy(),
+                    # "latent": self.latent.cpu().numpy(),
                 })
             else:
                 return TensorDict({
-                    "index": self._next_target_i.clone().detach().cpu().numpy().reshape(-1, 1),
+                    # "index": self._next_target_i.clone().detach().cpu().numpy().reshape(-1, 1),
                     "state": state,
                     "vd": self.v_d.unsqueeze(1).cpu().numpy(),
-                    "latent": self.latent.cpu().numpy(),
+                    # "latent": self.latent.cpu().numpy(),
                     # "pastAction": self.pastAction.cpu().numpy()
                 })

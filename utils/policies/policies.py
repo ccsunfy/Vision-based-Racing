@@ -11,7 +11,7 @@ from typing import List, Optional, Type, Union, Dict
 
 from stable_baselines3.common.type_aliases import Schedule, PyTorchObs
 from torchvision import models
-
+from utils.type import TensorDict
 
 class CustomMultiInputActorCriticPolicy(MultiInputActorCriticPolicy):
     recurrent_alias: Dict = {"GRU": th.nn.GRU}
@@ -112,6 +112,17 @@ class CustomMultiInputActorCriticPolicy(MultiInputActorCriticPolicy):
         self._build(lr_schedule)
             
     def forward(self, obs: th.Tensor, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    # #     print("obs depht: ", obs["depth"].shape)
+    # def forward(self, depth,state,vd,index,latent) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    # def forward(self, depth,state,vd,index) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    #     obs =  TensorDict({
+    #                 "depth": depth,
+    #                 "state": state,
+    #                 "vd": vd,
+    #                 "index": index,
+    #                 # "latent": latent
+    #             })
+    #     # th.save(obs,"obs.pth")
         """
         Forward pass in all the networks (actor and critic)
 
@@ -122,12 +133,13 @@ class CustomMultiInputActorCriticPolicy(MultiInputActorCriticPolicy):
         """
         # Preprocess the observation if needed
         if hasattr(self.features_extractor, "recurrent_extractor"):
-            features, h = self.extract_features(obs)
+            features, h = self.extract_features(obs)  #key process here!!!!
         else:
             features = self.extract_features(obs)
 
         if self.share_features_extractor:
             latent_pi, latent_vf = self.mlp_extractor(features)
+            # print(latent_pi.shape)
         else:
             pi_features, vf_features = features
             latent_pi = self.mlp_extractor.forward_actor(pi_features)
@@ -136,14 +148,49 @@ class CustomMultiInputActorCriticPolicy(MultiInputActorCriticPolicy):
         values = self.value_net(latent_vf)
         distribution = self._get_action_dist_from_latent(latent_pi)
         actions = distribution.get_actions(deterministic=deterministic)
+        # print("deterministic ",deterministic)
+        # actions = distribution.get_actions(deterministic=True)
         log_prob = distribution.log_prob(actions)
         actions = actions.reshape((-1, *self.action_space.shape))  # type: ignore[misc]
-
+        
+        
+        # th.save(actions,"actions.pth")
+        # print(obs["depth"], obs["state"], obs["vd"], obs["index"], obs["latent"])
         if hasattr(self.features_extractor, "recurrent_extractor"):
             return actions, values, log_prob, h
         else:
             return actions, values, log_prob
 
+    def forward1(self, depth,state,vd,index,latent) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+        obs =  TensorDict({
+                    "depth": depth,
+                    "state": state,
+                    "vd": vd,
+                    "index": index,
+                    "latent": latent
+                })
+        # th.save(obs,"obs.pth")
+        # Preprocess the observation if needed
+        features, h = self.extract_features(obs)  #key process here!!!!
+        latent_pi, latent_vf = self.mlp_extractor(features)
+
+        values = self.value_net(latent_vf)
+        mean_actions = self.action_net(latent_pi)
+        return mean_actions, values, h
+    
+    @th.no_grad()
+    def postprec(self,mean_actions, state, h):
+        for i in range(10):
+            distribution = self.action_dist.proba_distribution(mean_actions, self.log_std)
+            # actions = distribution.get_actions(deterministic=deterministic)
+            actions = distribution.get_actions(deterministic=True)
+            log_prob = distribution.log_prob(actions)
+            actions = actions.reshape((-1, *self.action_space.shape))  # type: ignore[misc]
+            actions = actions.cpu().numpy().reshape((-1, *self.action_space.shape))  # type: ignore[misc]
+            actions = np.clip(actions, self.action_space.low, self.action_space.high)  # type: ignore[assignment, arg-type]
+            # print(i,actions)
+        return actions, state,  h
+        
     def evaluate_actions(self, obs: PyTorchObs, actions: th.Tensor) -> Tuple[th.Tensor, th.Tensor, Optional[th.Tensor]]:
         """
         Evaluate actions according to the current policy,
@@ -260,6 +307,7 @@ class CustomMultiInputActorCriticPolicy(MultiInputActorCriticPolicy):
             assert isinstance(actions, np.ndarray)
             actions = actions.squeeze(axis=0)
         if hasattr(self.features_extractor, "recurrent_extractor"):
+            # print("torch actions ",actions)
             return actions, state, h
         else:
             return actions, state  # type: ignore[return-value]

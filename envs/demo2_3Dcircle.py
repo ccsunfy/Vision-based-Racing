@@ -1,14 +1,12 @@
 import numpy as np
 from envs.droneGymEnv import DroneGymEnvsBase
-from typing import Union, Tuple, List, Optional, Dict
+from typing import Optional, Dict
 import torch as th
 from habitat_sim import SensorType
 from gymnasium import spaces
 from collections import deque
 # from ..utils.tools.train_encoder import model as encoder
 from utils.type import TensorDict
-import random
-import json
 from scipy.spatial.transform import Rotation as R
 # is_pos_reward = True
 
@@ -77,44 +75,6 @@ class RacingEnv(DroneGymEnvsBase):
 
         #         }
         # }
-        # random_kwargs = {
-        #     "state_generator":
-        #         {
-        #             "class": "Union",
-
-        #             "kwargs": [
-        #                 {"randomizers_kwargs":
-        #                     [
-        #                         {
-        #                             "class": "Uniform",
-        #                             "kwargs":
-        #                                 {"position": {"mean": [2., 2., 1], "half": [.2, .2, 0.2]}},
-
-        #                         },
-        #                         {
-        #                             "class": "Uniform",
-        #                             "kwargs":
-        #                                 {"position": {"mean": [6., 2., 1.5], "half": [.2, .2, 0.2]}},
-
-        #                         },
-        #                         {
-        #                             "class": "Uniform",
-        #                             "kwargs":
-        #                                 {"position": {"mean": [6., -2., 1.5], "half": [.2, .2, 0.2]}},
-
-        #                         },
-        #                         {
-        #                             "class": "Uniform",
-        #                             "kwargs":
-        #                                 {"position": {"mean": [2., 0., 1], "half": [.2, .2, 0.2]}},
-
-        #                         },
-        #                     ]
-        #                 }
-        #             ]
-
-        #         }
-        # }
         random_kwargs = {
             "state_generator":
                 {
@@ -126,25 +86,25 @@ class RacingEnv(DroneGymEnvsBase):
                                 {
                                     "class": "Uniform",
                                     "kwargs":
-                                        {"position": {"mean": [2., 2., 1], "half": [0.5, 0.5, 0.5]}},
+                                        {"position": {"mean": [2., 2., 1], "half": [.2, .2, 0.2]}},
 
                                 },
                                 {
                                     "class": "Uniform",
                                     "kwargs":
-                                        {"position": {"mean": [6., 2., 1.5], "half": [0.5, 0.5, 0.5]}},
+                                        {"position": {"mean": [6., 2., 1.5], "half": [.2, .2, 0.2]}},
 
                                 },
                                 {
                                     "class": "Uniform",
                                     "kwargs":
-                                        {"position": {"mean": [6., -2., 1.5], "half": [0.5, 0.5, 0.5]}},
+                                        {"position": {"mean": [6., -2., 1.5], "half": [.2, .2, 0.2]}},
 
                                 },
                                 {
                                     "class": "Uniform",
                                     "kwargs":
-                                        {"position": {"mean": [2., 0., 1], "half": [0.5, 0.5, 0.5]}},
+                                        {"position": {"mean": [2., -2., 1], "half": [.2, .2, 0.2]}},
 
                                 },
                             ]
@@ -152,7 +112,7 @@ class RacingEnv(DroneGymEnvsBase):
                     ]
 
                 }
-            }
+        }
 
         sensor_kwargs = [{
             "sensor_type": SensorType.DEPTH,
@@ -191,7 +151,7 @@ class RacingEnv(DroneGymEnvsBase):
         self.previous_actions = deque(maxlen=4)  # 初始化动作队列
         self.last_action = th.zeros((self.num_envs, 4)) 
         self.last_position = th.zeros((self.num_envs, 3))
-        self.v_d = 2.0*th.ones((self.num_envs,),dtype=th.float)
+        self.v_d = 2.0 * th.ones((self.num_envs,),dtype=th.float)
         
         self.targets = th.as_tensor([
             [4, 4, 1.],
@@ -199,13 +159,18 @@ class RacingEnv(DroneGymEnvsBase):
             [5, -4, 1.],
             [1, -1, 1.],
         ])
+        # self.orientations = th.as_tensor([
+        #     [-0.5,  0.5,  0.5, -0.5],
+        #     [-0.70710678, 0, 0, -0.70710678],
+        #     [-0.5,  0.5,  0.5, -0.5],
+        #     [-0.70710678, 0, 0, -0.70710678],
+        # ])
         self.orientations = th.as_tensor([
             [-0.5,  0.5,  0.5, -0.5],
             [-0.70710678, 0, 0, -0.70710678],
-            [-0.5,  0.5,  0.5, -0.5],
-            [-0.70710678, 0, 0, -0.70710678],
+            [0.5,  -0.5,  -0.5, 0.5],
+            [0.70710678, 0, 0, 0.70710678],
         ])
-
         self.yaw_errors = th.zeros((self.num_envs, 1),dtype=float)
         
         self.length_target = len(self.targets)
@@ -217,8 +182,6 @@ class RacingEnv(DroneGymEnvsBase):
         
         self.total_timesteps = 0
         self.target_update_interval = 500
-        
-        # self.v_d = 2.0
         
         self.observation_space["vd"] = spaces.Box(
             low=0.,
@@ -291,7 +254,7 @@ class RacingEnv(DroneGymEnvsBase):
                     "state": self.state,
                     "vd": self.v_d,
                     "index": self._next_target_i,
-                    "pastAction": self.pastAction,
+                    # "pastAction": self.pastAction,
                     "latent": self.latent,
                     # "noise_target": self.noise_target,
                     "depth": th.from_numpy(self.sensor_obs["depth"]),
@@ -375,26 +338,26 @@ class RacingEnv(DroneGymEnvsBase):
    
     def get_reward(self) -> th.Tensor:
         lambda1 = 0.8
-        lambda2 = 0.025
+        lambda2 = 0.0025
         lambda3 = 0.0005
         lambda4 = 0.0002
         lambda5 = 0.001
-        lambda6 = 0.0001
+        lambda6 = 0.01
         
         _next_target_i_clamp = self._next_target_i.clamp_max(len(self.targets) - 1)
         r_prog1 = lambda1 * ((self.last_position - self.targets[_next_target_i_clamp]).norm(dim=1)-(self.position - self.targets[_next_target_i_clamp]).norm(dim=1))
         # r_prog2 = self._success * (self.max_episode_steps - self._step_count) * 1 / ((self.velocity-0).norm()+1)
         # r_perc = th.tensor(-lambda2 * np.exp(-np.power(self.compute_yaw_error(_next_target_i_clamp),4)))
+        r_ori = -lambda2 * (self.orientation-self.orientations[_next_target_i_clamp]).norm(dim=1)
         # r_success = 10.0 * self.get_success() # no contribution to the reward
         r_cmd = -lambda3 * (self._action - 0).norm(dim=1) - lambda4 * (self._action - self.last_action).norm(dim=1)
         r_crash = -4.0  * self.is_collision
-        r_vel = -lambda6 * ((self.velocity).norm(dim=1)-self.v_d).abs()
-        # r_v = -lambda7 * (self.velocity - 0).norm(dim=1) 
+        r_v = -lambda6 * (self.velocity - 0).norm(dim=1) 
         r_col_avoid = -lambda5 * 1 / (self.collision_dis + 0.2) 
         # + (1-self.collision_dis ).relu() * ((self.collision_vector * (self.velocity - 0)).sum(dim=1) / (1e-6+self.collision_dis)).relu() * -lambda6
         # r_pass = (1.0 -(self.position - self.targets[_next_target_i_clamp]).norm(dim=1))* self.is_pass_next
         r_pass = 5.0 * self.is_pass_next
-        reward = r_prog1 + r_crash  + r_pass + r_cmd + r_col_avoid + r_vel #+ r_v
+        reward = r_prog1 + r_crash  + r_pass + r_cmd   + r_col_avoid + r_v + r_ori
         return reward  
 
 class RacingEnv2(RacingEnv):
@@ -437,9 +400,9 @@ class RacingEnv2(RacingEnv):
         self.total_timesteps += 1
 
         # 检查时间步长是否达到要求
-        if self.total_timesteps % self.target_update_interval == 0:
-            # self.reset_by_id(indices=self.indice)
-            self.reset()
+        # if self.total_timesteps % self.target_update_interval == 0:
+        #     # self.reset_by_id(indices=self.indice)
+        #     self.reset()
 
         _next_targets_i_clamp = th.stack([self._next_target_i + i for i in range(self._next_target_num)]).T % len(self.targets)
         next_targets = self.targets[_next_targets_i_clamp]
@@ -485,7 +448,7 @@ class RacingEnv2(RacingEnv):
                     # "noise_target": relative_pos.cpu().numpy(),
                     "vd": self.v_d.unsqueeze(1).cpu().numpy(),
                     "depth": self.sensor_obs["depth"],
-                    "latent": self.latent.cpu().numpy(),
+                    # "latent": self.latent.cpu().numpy(),
                     # "mask": (self.image/255.0).astype(np.float32),
                 })
             else:
@@ -494,7 +457,7 @@ class RacingEnv2(RacingEnv):
                     "state": state,
                     "vd": self.v_d.unsqueeze(1).cpu().numpy(),
                     # "noise_state": noise_state,
-                    "latent": self.latent.cpu().numpy(),
+                    # "latent": self.latent.cpu().numpy(),
                     # "noise_target": relative_pos.cpu().numpy(),
                     # "pastAction": self.pastAction.cpu().numpy()
                 })

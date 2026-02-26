@@ -8,8 +8,6 @@ from gymnasium import spaces
 import numpy as np
 from abc import ABC, abstractmethod
 import torch as th
-from utils.type import Uniform
-from utils.randomization import UniformStateRandomizer
 from habitat_sim import SensorType
 from utils.type import ACTION_TYPE
 
@@ -361,7 +359,11 @@ class DroneGymEnvsBase(VecEnv):
     @property
     def orientation(self):
         return self.envs.orientation
-
+    
+    @property
+    def acceleration(self):
+        return self.envs.acceleration
+    
     @property
     def velocity(self):
         return self.envs.velocity

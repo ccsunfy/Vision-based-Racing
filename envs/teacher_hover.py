@@ -1,6 +1,7 @@
 from envs.droneGymEnv import DroneGymEnvsBase
 from typing import Union, Tuple, List, Optional, Dict
 import torch as th
+import numpy as np
 from habitat_sim import SensorType
 from gymnasium import spaces
 from collections import deque
@@ -38,44 +39,6 @@ class HoverEnv(DroneGymEnvsBase):
                     ]
                 }
         }
-        # random_kwargs = {
-        #     "state_generator":
-        #         {
-        #             "class": "Union",
-
-        #             "kwargs": [
-        #                 {"randomizers_kwargs":
-        #                     [
-        #                         {
-        #                             "class": "Uniform",
-        #                             "kwargs":
-        #                                 {"position": {"mean": [2., 0., 2.], "half": [2.0, 2.0, 1.0]}},
-
-        #                         },
-        #                         # {
-        #                         #     "class": "Uniform",
-        #                         #     "kwargs":
-        #                         #         {"position": {"mean": [4., 0., 1.5], "half": [.2, .2, 0.2]}},
-
-        #                         # },
-        #                         # {
-        #                         #     "class": "Uniform",
-        #                         #     "kwargs":
-        #                         #         {"position": {"mean": [7., 0., 1], "half": [.2, .2, 0.2]}},
-
-        #                         # },
-        #                         # {
-        #                         #     "class": "Uniform",
-        #                         #     "kwargs":
-        #                         #         {"position": {"mean": [10., 0., 1], "half": [.2, .2, 0.2]}},
-
-        #                         # },
-        #                     ]
-        #                 }
-        #             ]
-
-        #         }
-        # }
 
         # sensor_kwargs = [{
         #     "sensor_type": SensorType.DEPTH,
@@ -243,7 +206,7 @@ class HoverEnv(DroneGymEnvsBase):
                     
                     
     def get_reward(self) -> th.Tensor:
-        lambda1 = 0.8
+        lambda1 = 0.002
         lambda2 = 0.025
         lambda3 = 0.0005
         lambda4 = 0.0002
@@ -253,7 +216,7 @@ class HoverEnv(DroneGymEnvsBase):
         # _next_target_i_clamp = self._next_target_i.clamp_max(len(self.targets) - 1)
         r_prog1 = lambda1 * (self.last_position - self.target).norm(dim=1)
         # r_prog2 = self._success * (self.max_episode_steps - self._step_count) * 1 / ((self.velocity-0).norm()+1)
-        # r_perc = th.tensor(-lambda2 * np.exp(-np.power(self.compute_yaw_error(_next_target_i_clamp),4)))
+        # r_perc = th.tensor(-lambda2 * np.exp(-np.power(self.compute_yaw_error(self.target), 4)))    
         # r_success = 10.0 * self.get_success() # no contribution to the reward
         r_cmd = -lambda3 * (self._action - 0).norm(dim=1) - lambda4 * (self._action - self.last_action).norm(dim=1)
         # r_crash = -4.0  * self.is_collision
