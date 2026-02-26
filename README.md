@@ -1,8 +1,8 @@
 ## CRL for Drone Racing with Random Obstacles
 
-[![Conference](https://img.shields.io/badge/ICRA-2026-red.svg)](#citation)
+[![Conference](https://img.shields.io/badge/ICRA-2026-red.svg)](https://www.ieee-ras.org/conferences-workshops/fully-sponsored/icra)
 [![Simulator](https://img.shields.io/badge/Simulator-VisFly-brightgreen.svg)](https://github.com/SJTU-ViSYS-team/VisFly)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 Official implementation of a **vision-based quadrotor racing** system with depth perception and reinforcement learning.  
 This repository accompanies an **ICRA 2026** paper on end-to-end vision-based drone racing in cluttered environments.
