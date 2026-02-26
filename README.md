@@ -1,4 +1,4 @@
-## Vision-based Racing
+## CRL for Drone Racing with Random Obstacles
 
 Official implementation of a **vision-based quadrotor racing** system with depth perception and reinforcement learning.  
 This repository accompanies an **ICRA 2026** paper on end-to-end vision-based drone racing in cluttered environments.
